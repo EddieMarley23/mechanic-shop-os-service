@@ -39,7 +39,13 @@ public class AuthController {
 
 		var userPrincipal = (UserPrincipal) auth.getPrincipal();
 		assert userPrincipal != null;
-		var token = tokenService.generateToken(userPrincipal.getUsername());
+		var role = userPrincipal
+			.getAuthorities()
+			.stream()
+			.map(a -> a.getAuthority().replaceFirst("^ROLE_", ""))
+			.findFirst()
+			.orElse(null);
+		var token = tokenService.generateToken(userPrincipal.getUsername(), role);
 
 		return ResponseEntity.ok(new ApiResponse(HttpStatus.OK.value(), successMessage, token));
 	}

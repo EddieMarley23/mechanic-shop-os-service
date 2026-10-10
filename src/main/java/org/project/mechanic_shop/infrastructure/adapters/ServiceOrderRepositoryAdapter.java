@@ -33,11 +33,6 @@ public class ServiceOrderRepositoryAdapter implements ServiceOrderRepositoryPort
 	}
 
 	@Override
-	public Optional<ServiceOrder> findByApprovalToken(String token) {
-		return jpaRepository.findByApprovalToken(token).map(mapper::toDomain);
-	}
-
-	@Override
 	public Double findAverageCompletionDays() {
 		return jpaRepository.findAverageCompletionDays();
 	}

@@ -20,9 +20,9 @@ public record ServiceOrderCreateDto(
 	@Schema(description = "External ID of the mechanic to assign (optional)", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
 	UUID mechanicExternalId,
 
-	@Schema(description = "Labour items to include in the initial budget (optional — triggers DIAGNOSIS status)")
+	@Schema(description = "Labour items to include in the initial budget (optional — a preliminary estimate, replaced by the mechanic's diagnosis)")
 	List<ServiceOrderLaborManDto> labors,
 
-	@Schema(description = "Parts/consumables to include in the initial budget (optional — triggers DIAGNOSIS status)")
+	@Schema(description = "Parts/consumables to include in the initial budget (optional — a preliminary estimate, replaced by the mechanic's diagnosis)")
 	List<ServiceOrderStockItemManDto> parts
 ) {}

@@ -23,7 +23,7 @@ class TokenServiceTest {
 
 	@Test
 	void shouldReturnSubjectForAValidToken() {
-		String token = tokenService.generateToken("user@test.com");
+		String token = tokenService.generateToken("user@test.com", "ADMIN");
 
 		assertThat(tokenService.validateToken(token)).isEqualTo("user@test.com");
 	}
@@ -39,7 +39,7 @@ class TokenServiceTest {
 		TokenService fixedClockTokenService = new TokenService(Clock.fixed(fixedNow, ZoneOffset.UTC));
 		ReflectionTestUtils.setField(fixedClockTokenService, "secret", "test-secret");
 
-		String token = fixedClockTokenService.generateToken("user@test.com");
+		String token = fixedClockTokenService.generateToken("user@test.com", "ADMIN");
 		Instant expiresAt = JWT.decode(token).getExpiresAtAsInstant();
 
 		assertThat(expiresAt).isEqualTo(fixedNow.plus(Duration.ofHours(2)));

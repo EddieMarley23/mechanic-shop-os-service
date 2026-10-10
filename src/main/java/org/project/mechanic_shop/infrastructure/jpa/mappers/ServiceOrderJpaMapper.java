@@ -3,11 +3,9 @@ package org.project.mechanic_shop.infrastructure.jpa.mappers;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.project.mechanic_shop.domain.entities.budget.Budget;
 import org.project.mechanic_shop.domain.entities.service_order.ServiceOrder;
 import org.project.mechanic_shop.domain.entities.service_order_labor.ServiceOrderLabor;
 import org.project.mechanic_shop.domain.entities.service_order_stock_item.ServiceOrderStockItem;
-import org.project.mechanic_shop.infrastructure.jpa.entities.BudgetJpaEntity;
 import org.project.mechanic_shop.infrastructure.jpa.entities.ServiceOrderJpaEntity;
 import org.project.mechanic_shop.infrastructure.jpa.entities.ServiceOrderLaborJpaEntity;
 import org.project.mechanic_shop.infrastructure.jpa.entities.ServiceOrderStockItemJpaEntity;
@@ -37,13 +35,12 @@ public class ServiceOrderJpaMapper {
 		so.setResponsibleMechanic(userJpaMapper.toDomain(jpa.getResponsibleMechanic()));
 		so.setMechanicDiagnosis(jpa.getMechanicDiagnosis());
 		so.setStatus(jpa.getStatus());
-		so.setBudget(budgetToDomain(jpa.getBudget()));
+		so.setBudgetTotalAmount(jpa.getBudgetTotalAmount());
 		so.setApprovalDate(jpa.getApprovalDate());
 		so.setEstimatedCompletionDate(jpa.getEstimatedCompletionDate());
 		so.setEstimatedCompletionDays(jpa.getEstimatedCompletionDays());
 		so.setActualCompletionDate(jpa.getActualCompletionDate());
 		so.setActualCompletionDays(jpa.getActualCompletionDays());
-		so.setApprovalToken(jpa.getApprovalToken());
 		so.setLabors(laborsToDomain(jpa.getLabors()));
 		so.setStockItems(stockItemsToDomain(jpa.getStockItems()));
 		return so;
@@ -64,36 +61,14 @@ public class ServiceOrderJpaMapper {
 		jpa.setResponsibleMechanic(userJpaMapper.toJpa(so.getResponsibleMechanic()));
 		jpa.setMechanicDiagnosis(so.getMechanicDiagnosis());
 		jpa.setStatus(so.getStatus());
-		jpa.setBudget(budgetToJpa(so.getBudget(), jpa));
+		jpa.setBudgetTotalAmount(so.getBudgetTotalAmount());
 		jpa.setApprovalDate(so.getApprovalDate());
 		jpa.setEstimatedCompletionDate(so.getEstimatedCompletionDate());
 		jpa.setEstimatedCompletionDays(so.getEstimatedCompletionDays());
 		jpa.setActualCompletionDate(so.getActualCompletionDate());
 		jpa.setActualCompletionDays(so.getActualCompletionDays());
-		jpa.setApprovalToken(so.getApprovalToken());
 		jpa.setLabors(laborsToJpa(so.getLabors(), jpa));
 		jpa.setStockItems(stockItemsToJpa(so.getStockItems(), jpa));
-		return jpa;
-	}
-
-	private Budget budgetToDomain(BudgetJpaEntity jpa) {
-		if (jpa == null) return null;
-		Budget b = new Budget();
-		b.setId(jpa.getId());
-		b.setExternalId(jpa.getExternalId());
-		b.setTotalAmount(jpa.getTotalAmount());
-		b.setStatus(jpa.getStatus());
-		return b;
-	}
-
-	private BudgetJpaEntity budgetToJpa(Budget b, ServiceOrderJpaEntity owner) {
-		if (b == null) return null;
-		BudgetJpaEntity jpa = new BudgetJpaEntity();
-		jpa.setId(b.getId());
-		jpa.setExternalId(b.getExternalId());
-		jpa.setTotalAmount(b.getTotalAmount());
-		jpa.setStatus(b.getStatus());
-		jpa.setServiceOrder(owner);
 		return jpa;
 	}
 

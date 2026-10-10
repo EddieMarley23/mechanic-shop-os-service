@@ -1,7 +1,9 @@
 FROM maven:3.9.6-eclipse-temurin-21 AS builder
 WORKDIR /app
 COPY . .
-RUN mvn clean package -DskipTests
+# The local Maven repository is kept in a BuildKit cache, so rebuilds do not download every
+# dependency again.
+RUN --mount=type=cache,target=/root/.m2 mvn -B clean package -DskipTests
 
 # The New Relic Java agent is downloaded at build time instead of being vendored in git,
 # so the repository stays free of binaries and the version is pinned in one place.

@@ -16,21 +16,24 @@ import org.junit.jupiter.api.Test;
 import org.project.mechanic_shop.config.AbstractIntegrationTest;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderCreateDto;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderLaborManDto;
-import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderQuoteDto;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderStockItemManDto;
-import org.project.mechanic_shop.domain.dto.service_order_dto.budget_dto.BudgetResponseDto;
-import org.project.mechanic_shop.domain.entities.budget.Budget;
 import org.project.mechanic_shop.domain.entities.mechanic_service.MechanicService;
 import org.project.mechanic_shop.domain.entities.service_order.ServiceOrder;
 import org.project.mechanic_shop.domain.entities.service_order_stock_item.ServiceOrderStockItem;
 import org.project.mechanic_shop.domain.entities.stock_item.StockItem;
 import org.project.mechanic_shop.domain.entities.user.User;
 import org.project.mechanic_shop.domain.entities.vehicle.Vehicle;
-import org.project.mechanic_shop.domain.enums.BudgetStatusEnum;
 import org.project.mechanic_shop.domain.enums.ServiceOrderStatusEnum;
 import org.project.mechanic_shop.domain.enums.StockItemTypeEnum;
 import org.project.mechanic_shop.domain.enums.UserRoleEnum;
 import org.project.mechanic_shop.application.ports.MechanicServiceRepositoryPort;
+import org.project.mechanic_shop.application.ports.SagaInstanceRepositoryPort;
+import org.project.mechanic_shop.application.saga.SagaMessageTypes;
+import org.project.mechanic_shop.domain.entities.saga.SagaInstance;
+import org.project.mechanic_shop.domain.enums.SagaStatusEnum;
+import org.project.mechanic_shop.domain.enums.SagaStepEnum;
+import org.project.mechanic_shop.infrastructure.jpa.repositories.OutboxMessageJpaRepository;
+import org.project.mechanic_shop.infrastructure.messaging.RabbitTopologyConfig;
 import org.project.mechanic_shop.application.ports.ServiceOrderRepositoryPort;
 import org.project.mechanic_shop.application.ports.StockItemRepositoryPort;
 import org.project.mechanic_shop.application.ports.UserRepositoryPort;
@@ -62,6 +65,12 @@ class ServiceOrderControllerIT extends AbstractIntegrationTest {
 
 	@Autowired
 	private MechanicServiceRepositoryPort mechanicServiceRepository;
+
+	@Autowired
+	private SagaInstanceRepositoryPort sagaRepository;
+
+	@Autowired
+	private OutboxMessageJpaRepository outboxRepository;
 
 	@Test
 	void shouldCreateServiceOrderAndPersistIt() throws Exception {
@@ -105,9 +114,53 @@ class ServiceOrderControllerIT extends AbstractIntegrationTest {
 		assertThat(persistedOrder.getCustomerComplaint()).isEqualTo(payload.customerComplaint());
 		assertThat(persistedOrder.getOdometerReading()).isEqualTo(payload.odometerReading());
 		assertThat(persistedOrder.getStatus()).isEqualTo(ServiceOrderStatusEnum.RECEIVED);
-		assertThat(persistedOrder.getBudget()).isNotNull();
-		assertThat(persistedOrder.getBudget().getTotalAmount()).isEqualByComparingTo(BigDecimal.ZERO);
-		assertThat(persistedOrder.getBudget().getStatus()).isEqualTo(BudgetStatusEnum.OPEN);
+		assertThat(persistedOrder.getBudgetTotalAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+	}
+
+	@Test
+	void shouldStartSagaAndQueueDiagnosisCommandInTheOutboxWhenCreatingServiceOrder() throws Exception {
+		User owner = userRepository.save(
+			buildUser("11144477735", "Cliente Saga", "customer.service-order.saga@test.com", UserRoleEnum.CUSTOMER)
+		);
+		Vehicle vehicle = vehicleRepository.save(buildVehicle("SAG4A01", owner));
+
+		ServiceOrderCreateDto payload = new ServiceOrderCreateDto(vehicle.getExternalId(), "Freio", 1000, null, null, null);
+
+		String responseBody = mockMvc
+			.perform(
+				post("/api/service-orders/create")
+					.with(AuthUtil.admin())
+					.with(csrf())
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(objectMapper.writeValueAsString(payload))
+			)
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+
+		UUID externalId = UUID.fromString(objectMapper.readTree(responseBody).get("data").asText());
+
+		SagaInstance saga = sagaRepository.findByServiceOrderId(externalId).orElseThrow();
+		assertThat(saga.getStep()).isEqualTo(SagaStepEnum.DIAGNOSIS);
+		assertThat(saga.getStatus()).isEqualTo(SagaStatusEnum.RUNNING);
+
+		// The command is written in the same transaction as the order (transactional outbox).
+		assertThat(outboxRepository.findAll())
+			.filteredOn(o -> o.getPayload().contains(externalId.toString()))
+			.singleElement()
+			.satisfies(outbox -> {
+				assertThat(outbox.getMessageType()).isEqualTo(SagaMessageTypes.EXECUTION_DIAGNOSIS_START);
+				assertThat(outbox.getExchange()).isEqualTo(RabbitTopologyConfig.COMMANDS_EXCHANGE);
+				assertThat(outbox.getRoutingKey()).isEqualTo(RabbitTopologyConfig.EXECUTION_ROUTING_KEY);
+				assertThat(outbox.getPayload()).contains("SAG4A01");
+			});
+
+		mockMvc
+			.perform(get("/api/service-orders/{id}/saga", externalId).with(AuthUtil.admin()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.step").value("DIAGNOSIS"))
+			.andExpect(jsonPath("$.data.history[0].trigger").value("service-order.opened"));
 	}
 
 	@Test
@@ -158,123 +211,6 @@ class ServiceOrderControllerIT extends AbstractIntegrationTest {
 			.andExpect(jsonPath("$.data.customerComplaint").value(savedOrder.getCustomerComplaint()))
 			.andExpect(jsonPath("$.data.vehicle.licensePlate").value(vehicle.getLicensePlate()))
 			.andExpect(jsonPath("$.data.responsibleMechanic.externalId").value(mechanic.getExternalId().toString()));
-	}
-
-	@Test
-	void shouldUpdateQuoteUsingRealServiceAndRepository() throws Exception {
-		User owner = userRepository.save(
-			buildUser(
-				"45317828791",
-				"Cliente Orcamento",
-				"customer.service-order.quote@test.com",
-				UserRoleEnum.CUSTOMER
-			)
-		);
-		User mechanic = userRepository.save(
-			buildUser(
-				"56812345087",
-				"Mecanico Orcamento",
-				"mechanic.service-order.quote@test.com",
-				UserRoleEnum.MECHANIC
-			)
-		);
-		Vehicle vehicle = vehicleRepository.save(buildVehicle("GHI1J67", owner));
-		ServiceOrder savedOrder = serviceOrderRepository.save(
-			buildServiceOrder(vehicle, mechanic, "Vazamento de oleo")
-		);
-		StockItem stockItem = stockItemRepository.save(buildStockItem("P-SO-01", "Filtro de Oleo", 10, "20.00"));
-		MechanicService mechanicService = mechanicServiceRepository.save(
-			buildMechanicService("Troca de Oleo", "150.00")
-		);
-
-		ServiceOrderQuoteDto payload = new ServiceOrderQuoteDto(
-			"Troca de oleo e filtro",
-			List.of(new ServiceOrderStockItemManDto(stockItem.getExternalId(), 1)),
-			List.of(new ServiceOrderLaborManDto(mechanicService.getExternalId(), 1))
-		);
-
-		mockMvc
-			.perform(
-				put("/api/service-orders/{id}/quote", savedOrder.getExternalId())
-					.with(AuthUtil.admin())
-					.with(csrf())
-					.contentType(MediaType.APPLICATION_JSON)
-					.content(objectMapper.writeValueAsString(payload))
-			)
-			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.status").value(HttpStatus.OK.value()))
-			.andExpect(jsonPath("$.message").value("success"))
-			.andExpect(jsonPath("$.data.externalId").value(savedOrder.getExternalId().toString()))
-			.andExpect(jsonPath("$.data.budget.totalAmount").value(170.0))
-			.andExpect(jsonPath("$.data.vehicle.licensePlate").value(vehicle.getLicensePlate()))
-			.andExpect(jsonPath("$.data.status").value(ServiceOrderStatusEnum.DIAGNOSIS.name()));
-
-		ServiceOrder updatedOrder = serviceOrderRepository.findByExternalId(savedOrder.getExternalId()).orElseThrow();
-
-		assertThat(updatedOrder.getMechanicDiagnosis()).isEqualTo(payload.mechanicDiagnosis());
-		assertThat(updatedOrder.getBudget().getTotalAmount()).isEqualByComparingTo("170.00");
-		assertThat(updatedOrder.getStatus()).isEqualTo(ServiceOrderStatusEnum.DIAGNOSIS);
-		assertThat(updatedOrder.getStockItems()).hasSize(1);
-		assertThat(updatedOrder.getLabors()).hasSize(1);
-		assertThat(updatedOrder.getStockItems().getFirst().getStockItem().getExternalId()).isEqualTo(
-			stockItem.getExternalId()
-		);
-		assertThat(updatedOrder.getLabors().getFirst().getMechanicService().getExternalId()).isEqualTo(
-			mechanicService.getExternalId()
-		);
-	}
-
-	@Test
-	void shouldProcessApprovedBudgetAndWithdrawStockUsingRealServiceAndRepository() throws Exception {
-		User owner = userRepository.save(
-			buildUser("81731234060", "Cliente Status", "customer.service-order.status@test.com", UserRoleEnum.CUSTOMER)
-		);
-		User mechanic = userRepository.save(
-			buildUser("93453224031", "Mecanico Status", "mechanic.service-order.status@test.com", UserRoleEnum.MECHANIC)
-		);
-		Vehicle vehicle = vehicleRepository.save(buildVehicle("JKL2M89", owner));
-		StockItem stockItem = stockItemRepository.save(buildStockItem("P-SO-02", "Correia Dentada", 5, "80.00"));
-
-		ServiceOrder serviceOrder = buildServiceOrder(vehicle, mechanic, "Ruido no motor");
-		serviceOrder.setStatus(ServiceOrderStatusEnum.PENDING_APPROVAL);
-		serviceOrder.getBudget().setStatus(BudgetStatusEnum.SENT);
-
-		ServiceOrderStockItem orderPart = new ServiceOrderStockItem();
-		orderPart.setStockItem(stockItem);
-		orderPart.setStockItemType(stockItem.getType());
-		orderPart.setQuantity(2);
-		orderPart.setUnitPrice(stockItem.getSalePrice());
-		orderPart.setTotalPrice(new BigDecimal("160.00"));
-		serviceOrder.addStockItem(orderPart);
-		serviceOrder.getBudget().setTotalAmount(new BigDecimal("160.00"));
-
-		ServiceOrder savedOrder = serviceOrderRepository.save(serviceOrder);
-
-		mockMvc
-			.perform(
-				post("/api/service-orders/{id}/budget-response", savedOrder.getExternalId())
-					.with(AuthUtil.admin())
-					.with(csrf())
-					.contentType(MediaType.APPLICATION_JSON)
-					.content(objectMapper.writeValueAsString(new BudgetResponseDto(true)))
-			)
-			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.status").value(HttpStatus.OK.value()))
-			.andExpect(
-				jsonPath("$.message").value(
-					"Budget approved successfully! Stock withdrawn and OS moved to IN_PROGRESS."
-				)
-			)
-			.andExpect(jsonPath("$.data.status").value(ServiceOrderStatusEnum.IN_PROGRESS.name()));
-
-		ServiceOrder updatedOrder = serviceOrderRepository.findByExternalId(savedOrder.getExternalId()).orElseThrow();
-		StockItem updatedItem = stockItemRepository.findByExternalId(stockItem.getExternalId()).orElseThrow();
-
-		assertThat(updatedOrder.getStatus()).isEqualTo(ServiceOrderStatusEnum.IN_PROGRESS);
-		assertThat(updatedOrder.getBudget().getStatus()).isEqualTo(BudgetStatusEnum.APPROVED);
-		assertThat(updatedOrder.getApprovalDate()).isNotNull();
-		assertThat(updatedItem.getQuantity()).isEqualTo(3);
-		assertThat(updatedItem.getPendingDemand()).isZero();
 	}
 
 	@Test
@@ -376,17 +312,12 @@ class ServiceOrderControllerIT extends AbstractIntegrationTest {
 	}
 
 	private ServiceOrder buildServiceOrder(Vehicle vehicle, User mechanic, String complaint) {
-		Budget budget = new Budget();
-		budget.setTotalAmount(BigDecimal.ZERO);
-		budget.setStatus(BudgetStatusEnum.OPEN);
-
 		ServiceOrder order = new ServiceOrder();
 		order.setVehicle(vehicle);
 		order.setResponsibleMechanic(mechanic);
 		order.setCustomerComplaint(complaint);
 		order.setOdometerReading(45210);
 		order.setStatus(ServiceOrderStatusEnum.RECEIVED);
-		order.setBudget(budget);
 		return order;
 	}
 

@@ -19,6 +19,8 @@ public class TokenService {
 
 	private final Clock clock;
 
+	public static final String ROLE_CLAIM = "role";
+
 	@Autowired
 	public TokenService() {
 		this(Clock.systemUTC());
@@ -28,12 +30,17 @@ public class TokenService {
 		this.clock = clock;
 	}
 
-	public String generateToken(String username) {
+	/**
+	 * The role travels in the token because the Billing and Execution services have no user table:
+	 * for them the token is the only source of identity.
+	 */
+	public String generateToken(String username, String role) {
 		try {
 			Algorithm algorithm = Algorithm.HMAC256(secret);
 			return JWT.create()
 				.withIssuer("mechanic-shop-api")
 				.withSubject(username)
+				.withClaim(ROLE_CLAIM, role)
 				.withExpiresAt(genExpirationDate())
 				.sign(algorithm);
 		} catch (JWTCreationException exception) {

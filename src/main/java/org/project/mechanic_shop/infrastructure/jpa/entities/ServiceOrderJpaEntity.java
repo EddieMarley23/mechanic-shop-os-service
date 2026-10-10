@@ -1,6 +1,7 @@
 package org.project.mechanic_shop.infrastructure.jpa.entities;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,10 +55,8 @@ public class ServiceOrderJpaEntity extends BaseAuditJpaEntity {
 	@Column(nullable = false, length = 20)
 	private ServiceOrderStatusEnum status = ServiceOrderStatusEnum.RECEIVED;
 
-	@OneToOne(cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
-	@OnDelete(action = OnDeleteAction.CASCADE)
-	@JoinColumn(name = "budget_id", referencedColumnName = "id")
-	private BudgetJpaEntity budget;
+	@Column(name = "budget_total_amount", precision = 10, scale = 2)
+	private BigDecimal budgetTotalAmount = BigDecimal.ZERO;
 
 	@Column(name = "approval_date")
 	private LocalDateTime approvalDate;
@@ -73,7 +72,4 @@ public class ServiceOrderJpaEntity extends BaseAuditJpaEntity {
 
 	@Column(name = "actual_completion_days")
 	private Integer actualCompletionDays;
-
-	@Column(name = "approval_token", unique = true)
-	private String approvalToken;
 }

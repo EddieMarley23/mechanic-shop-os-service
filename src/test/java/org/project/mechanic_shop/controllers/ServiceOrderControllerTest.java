@@ -15,10 +15,8 @@ import org.project.mechanic_shop.config.SecurityConfig;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderCreateDto;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderLaborManDto;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderMetricsDto;
-import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderQuoteDto;
+import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderSagaDto;
 import org.project.mechanic_shop.domain.dto.service_order_dto.ServiceOrderStockItemManDto;
-import org.project.mechanic_shop.domain.dto.service_order_dto.budget_dto.BudgetResponseDto;
-import org.project.mechanic_shop.domain.entities.budget.Budget;
 import org.project.mechanic_shop.domain.entities.mechanic_service.MechanicService;
 import org.project.mechanic_shop.domain.entities.service_order.ServiceOrder;
 import org.project.mechanic_shop.domain.entities.service_order_labor.ServiceOrderLabor;
@@ -26,7 +24,8 @@ import org.project.mechanic_shop.domain.entities.service_order_stock_item.Servic
 import org.project.mechanic_shop.domain.entities.stock_item.StockItem;
 import org.project.mechanic_shop.domain.entities.user.User;
 import org.project.mechanic_shop.domain.entities.vehicle.Vehicle;
-import org.project.mechanic_shop.domain.enums.BudgetStatusEnum;
+import org.project.mechanic_shop.domain.enums.SagaStatusEnum;
+import org.project.mechanic_shop.domain.enums.SagaStepEnum;
 import org.project.mechanic_shop.domain.enums.ServiceOrderStatusEnum;
 import org.project.mechanic_shop.domain.enums.StockItemTypeEnum;
 import org.project.mechanic_shop.domain.enums.UserRoleEnum;
@@ -127,7 +126,7 @@ class ServiceOrderControllerTest {
 				.andExpect(jsonPath("$.message").value("success"))
 				.andExpect(jsonPath("$.data.externalId").value(serviceOrder.getExternalId().toString()))
 				.andExpect(jsonPath("$.data.status").value(serviceOrder.getStatus().name()))
-				.andExpect(jsonPath("$.data.budgetStatus").value(serviceOrder.getBudget().getStatus().name()));
+				.andExpect(jsonPath("$.data.budgetStatus").doesNotExist());
 		}
 
 		@Test
@@ -143,42 +142,51 @@ class ServiceOrderControllerTest {
 	}
 
 	@Nested
-	class ProcessBudgetApprovalByEmail {
+	class GetSaga {
 
 		@Test
-		void shouldReturnApprovalHtmlPageWhenApproved() throws Exception {
-			String token = UUID.randomUUID().toString();
-			var serviceOrder = buildServiceOrder();
+		void shouldReturnSagaStateAndHistory() throws Exception {
+			var externalId = UUID.randomUUID();
+			var sagaId = UUID.randomUUID();
+			var now = java.time.Instant.parse("2026-01-01T10:00:00Z");
+			var dto = new ServiceOrderSagaDto(
+				sagaId,
+				externalId,
+				SagaStepEnum.AWAITING_PAYMENT,
+				SagaStatusEnum.RUNNING,
+				null,
+				now.plusSeconds(3600),
+				now,
+				null,
+				List.of(
+					new ServiceOrderSagaDto.Entry(
+						now,
+						"billing.budget.approved",
+						SagaStepEnum.AWAITING_PAYMENT,
+						SagaStatusEnum.RUNNING,
+						"Budget approved."
+					)
+				)
+			);
 
-			when(service.processBudgetResponseByToken(token, true)).thenReturn(serviceOrder);
+			when(service.getSaga(externalId)).thenReturn(dto);
 
 			mockMvc
-				.perform(
-					get("/api/service-orders/budget-approval")
-						.param("token", token)
-						.param("approved", "true")
-				)
+				.perform(get("/api/service-orders/{id}/saga", externalId))
 				.andExpect(status().isOk())
-				.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-				.andExpect(content().string(containsString("Orçamento Aprovado!")));
+				.andExpect(jsonPath("$.data.sagaId").value(sagaId.toString()))
+				.andExpect(jsonPath("$.data.step").value("AWAITING_PAYMENT"))
+				.andExpect(jsonPath("$.data.status").value("RUNNING"))
+				.andExpect(jsonPath("$.data.history[0].trigger").value("billing.budget.approved"));
 		}
 
 		@Test
-		void shouldReturnRejectionHtmlPageWhenRejected() throws Exception {
-			String token = UUID.randomUUID().toString();
-			var serviceOrder = buildServiceOrder();
+		void shouldReturnNotFoundWhenServiceOrderHasNoSaga() throws Exception {
+			var externalId = UUID.randomUUID();
 
-			when(service.processBudgetResponseByToken(token, false)).thenReturn(serviceOrder);
+			when(service.getSaga(externalId)).thenThrow(EntityNotFoundException.class);
 
-			mockMvc
-				.perform(
-					get("/api/service-orders/budget-approval")
-						.param("token", token)
-						.param("approved", "false")
-				)
-				.andExpect(status().isOk())
-				.andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-				.andExpect(content().string(containsString("Orçamento Recusado")));
+			mockMvc.perform(get("/api/service-orders/{id}/saga", externalId)).andExpect(status().isNotFound());
 		}
 	}
 
@@ -258,111 +266,6 @@ class ServiceOrderControllerTest {
 				)
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.status").value(HttpStatus.CONFLICT.value()));
-		}
-	}
-
-	@Nested
-	class UpdateQuote {
-
-		@Test
-		void shouldUpdateQuote() throws Exception {
-			var externalId = UUID.randomUUID();
-			var serviceOrder = buildServiceOrder();
-			var dto = buildQuoteDto(
-				serviceOrder.getStockItems().getFirst().getStockItem().getExternalId(),
-				serviceOrder.getLabors().getFirst().getMechanicService().getExternalId()
-			);
-
-			when(service.updateQuote(externalId, dto)).thenReturn(serviceOrder);
-
-			mockMvc
-				.perform(
-					put("/api/service-orders/{id}/quote", externalId)
-						.contentType(MediaType.APPLICATION_JSON)
-						.content(objectMapper.writeValueAsString(dto))
-				)
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.status").value(HttpStatus.OK.value()))
-				.andExpect(jsonPath("$.message").value("success"))
-				.andExpect(jsonPath("$.data.externalId").value(serviceOrder.getExternalId().toString()))
-				.andExpect(jsonPath("$.data.budget.totalAmount").value(170.0))
-				.andExpect(jsonPath("$.data.vehicle.licensePlate").value(serviceOrder.getVehicle().getLicensePlate()))
-				.andExpect(jsonPath("$.data.status").value(ServiceOrderStatusEnum.DIAGNOSIS.name()));
-		}
-
-		@Test
-		void shouldReturnConflictWhenUpdateQuoteFails() throws Exception {
-			var externalId = UUID.randomUUID();
-			var dto = buildQuoteDto(UUID.randomUUID(), UUID.randomUUID());
-
-			when(service.updateQuote(externalId, dto)).thenThrow(new IllegalArgumentException("invalid"));
-
-			mockMvc
-				.perform(
-					put("/api/service-orders/{id}/quote", externalId)
-						.contentType(MediaType.APPLICATION_JSON)
-						.content(objectMapper.writeValueAsString(dto))
-				)
-				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.status").value(HttpStatus.CONFLICT.value()));
-		}
-	}
-
-	@Nested
-	class RequestApproval {
-
-		@Test
-		void shouldRequestApproval() throws Exception {
-			var externalId = UUID.randomUUID();
-			var serviceOrder = buildServiceOrder();
-			serviceOrder.setStatus(ServiceOrderStatusEnum.PENDING_APPROVAL);
-			serviceOrder.getBudget().setStatus(BudgetStatusEnum.SENT);
-
-			when(service.requestCustomerApproval(externalId)).thenReturn(serviceOrder);
-
-			mockMvc
-				.perform(
-					post("/api/service-orders/{id}/request-approval", externalId).contentType(
-						MediaType.APPLICATION_JSON
-					)
-				)
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.status").value(HttpStatus.OK.value()))
-				.andExpect(
-					jsonPath("$.message").value("Approval requested successfully. Status updated to PENDING_APPROVAL.")
-				)
-				.andExpect(jsonPath("$.data.status").value(ServiceOrderStatusEnum.PENDING_APPROVAL.name()));
-		}
-	}
-
-	@Nested
-	class BudgetResponse {
-
-		@Test
-		void shouldProcessApprovedBudgetResponse() throws Exception {
-			var externalId = UUID.randomUUID();
-			var serviceOrder = buildServiceOrder();
-			serviceOrder.setStatus(ServiceOrderStatusEnum.IN_PROGRESS);
-			serviceOrder.getBudget().setStatus(BudgetStatusEnum.APPROVED);
-			var dto = new BudgetResponseDto(true);
-
-			when(service.processBudgetResponse(externalId, true)).thenReturn(serviceOrder);
-
-			mockMvc
-				.perform(
-					post("/api/service-orders/{id}/budget-response", externalId)
-						.contentType(MediaType.APPLICATION_JSON)
-						.content(objectMapper.writeValueAsString(dto))
-				)
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.status").value(HttpStatus.OK.value()))
-				.andExpect(
-					jsonPath("$.message").value(
-						"Budget approved successfully! Stock withdrawn and OS moved to IN_PROGRESS."
-					)
-				)
-				.andExpect(jsonPath("$.data.status").value(ServiceOrderStatusEnum.IN_PROGRESS.name()))
-				.andExpect(jsonPath("$.data.budget.status").value(BudgetStatusEnum.APPROVED.name()));
 		}
 	}
 
@@ -534,11 +437,6 @@ class ServiceOrderControllerTest {
 		mechanicService.setEstimatedTimeMinutes(60);
 		mechanicService.setPrice(new BigDecimal("150.00"));
 
-		Budget budget = new Budget();
-		budget.setExternalId(UUID.randomUUID());
-		budget.setStatus(BudgetStatusEnum.SENT);
-		budget.setTotalAmount(new BigDecimal("170.00"));
-
 		ServiceOrder order = new ServiceOrder();
 		order.setId(1L);
 		order.setExternalId(UUID.randomUUID());
@@ -548,7 +446,7 @@ class ServiceOrderControllerTest {
 		order.setResponsibleMechanic(mechanic);
 		order.setMechanicDiagnosis("Trocar filtro e oleo");
 		order.setStatus(ServiceOrderStatusEnum.DIAGNOSIS);
-		order.setBudget(budget);
+		order.setBudgetTotalAmount(new BigDecimal("170.00"));
 
 		ServiceOrderStockItem orderPart = new ServiceOrderStockItem();
 		orderPart.setId(1L);
@@ -572,13 +470,5 @@ class ServiceOrderControllerTest {
 
 	private ServiceOrderCreateDto buildCreateDto(UUID vehicleExternalId, UUID mechanicExternalId) {
 		return new ServiceOrderCreateDto(vehicleExternalId, "Barulho no motor", 45210, mechanicExternalId, null, null);
-	}
-
-	private ServiceOrderQuoteDto buildQuoteDto(UUID partExternalId, UUID mechanicServiceExternalId) {
-		return new ServiceOrderQuoteDto(
-			"Trocar filtro e oleo",
-			List.of(new ServiceOrderStockItemManDto(partExternalId, 1)),
-			List.of(new ServiceOrderLaborManDto(mechanicServiceExternalId, 1))
-		);
 	}
 }

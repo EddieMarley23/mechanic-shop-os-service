@@ -1,4 +1,9 @@
 spring:
+  rabbitmq:
+    listener:
+      simple:
+        # No broker in tests: the Saga is exercised through the orchestrator and the outbox table.
+        auto-startup: false
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:

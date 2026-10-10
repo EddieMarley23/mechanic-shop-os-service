@@ -7,7 +7,6 @@ import org.project.mechanic_shop.domain.events.ServiceOrderStatusChangedEvent;
 import org.project.mechanic_shop.domain.entities.service_order.ServiceOrder;
 import org.project.mechanic_shop.domain.entities.user.User;
 import org.project.mechanic_shop.application.ports.EmailService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -19,9 +18,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 public class ServiceOrderNotificationListener {
 
 	private final EmailService emailService;
-
-	@Value("${app.base-url}")
-	private String baseUrl;
 
 	@Async
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -42,38 +38,28 @@ public class ServiceOrderNotificationListener {
 					"Atualização do Serviço: Diagnóstico Iniciado",
 					"Seu veículo já está sendo avaliado por nossos mecânicos. Enviaremos o orçamento completo em breve."
 			);
-			case PENDING_APPROVAL -> {
-				String token = order.getApprovalToken();
-				String approveUrl = baseUrl + "/api/service-orders/budget-approval?token=" + token + "&approved=true";
-				String rejectUrl  = baseUrl + "/api/service-orders/budget-approval?token=" + token + "&approved=false";
-				String body = "O diagnóstico do seu veículo foi concluído e o orçamento está pronto para sua análise.\n\n" +
-						"OS: " + order.getExternalId() + "\n" +
-						"Total do Orçamento: R$ " + order.getBudget().getTotalAmount() + "\n\n" +
-						"Clique em um dos links abaixo para responder:\n\n" +
-						"✅ APROVAR: " + approveUrl + "\n\n" +
-						"❌ RECUSAR: " + rejectUrl + "\n\n" +
-						"Atenção: cada link pode ser utilizado apenas uma vez.";
-				sendEmail(customerEmail, "Ação Necessária: Orçamento Pendente de Aprovação", body);
-			}
+			// The budget (with the approve/reject links) and the payment link are e-mailed by the Billing Service.
+			case PENDING_APPROVAL -> log.info("Service Order '{}' awaiting budget approval.", order.getExternalId());
+			case PENDING_PAYMENT -> log.info("Service Order '{}' awaiting payment.", order.getExternalId());
 			case IN_PROGRESS -> sendEmail(
 					mechanicEmail,
 					"Tarefa Aprovada: Iniciar Reparos",
-					"O cliente aprovou o orçamento da OS #" +
+					"O orçamento da OS #" +
 							order.getExternalId() +
-							". Você já pode prosseguir com o serviço no veículo."
+							" foi aprovado e pago. Você já pode prosseguir com o serviço no veículo."
 			);
 			case CANCELED -> {
 				sendEmail(
 						customerEmail,
 						"Serviço Cancelado",
-						"Conforme solicitado, a ordem de serviço com o código '" + order.getExternalId() + "' foi encerrada. Por favor, providencie a retirada do seu veículo assim que possível."
+						"A ordem de serviço com o código '" + order.getExternalId() + "' foi cancelada. Por favor, providencie a retirada do seu veículo assim que possível."
 				);
 				sendEmail(
 						mechanicEmail,
-						"Serviço Cancelado pelo Cliente",
-						"O orçamento da OS #" +
+						"Serviço Cancelado",
+						"A OS #" +
 								order.getExternalId() +
-								" foi rejeitado. O serviço foi finalizado e nenhuma ação adicional é necessária de sua parte."
+								" foi cancelada. O serviço foi encerrado e nenhuma ação adicional é necessária de sua parte."
 				);
 			}
 			case COMPLETED -> sendEmail(

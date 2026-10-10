@@ -15,4 +15,5 @@ public interface StockItemService {
 	StockItem update(UUID id, StockItem update);
 
 	boolean withdrawStock(UUID externalId, Integer requestedQuantity);
+	void restoreStock(UUID externalId, Integer returnedQuantity);
 }

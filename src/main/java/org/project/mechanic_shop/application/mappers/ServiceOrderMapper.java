@@ -19,7 +19,6 @@ public interface ServiceOrderMapper {
 	@Mapping(target = "customerName", source = "vehicle.owner.name")
 	ServiceOrderShortDto toShortDto(ServiceOrder entity);
 
-	@Mapping(target = "budgetStatus", source = "budget.status")
 	ServiceOrderStatusDto toStatusDto(ServiceOrder entity);
 
 	@Mapping(target = "partExternalId", source = "stockItem.externalId")

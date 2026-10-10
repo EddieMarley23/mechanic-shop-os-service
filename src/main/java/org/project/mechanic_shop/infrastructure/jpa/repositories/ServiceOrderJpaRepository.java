@@ -14,7 +14,6 @@ import org.springframework.data.repository.query.Param;
 
 public interface ServiceOrderJpaRepository extends JpaRepository<ServiceOrderJpaEntity, Long> {
 	Optional<ServiceOrderJpaEntity> findByExternalId(UUID externalId);
-	Optional<ServiceOrderJpaEntity> findByApprovalToken(String approvalToken);
 @Query("SELECT AVG(so.actualCompletionDays) FROM ServiceOrderJpaEntity so WHERE so.actualCompletionDays IS NOT NULL")
 	Double findAverageCompletionDays();
 

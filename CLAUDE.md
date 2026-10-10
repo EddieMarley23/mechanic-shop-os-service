@@ -1,0 +1,50 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Overview
+
+OS Service: Spring Boot 4 / Java 21 REST API for a mechanic shop (customers, vehicles, stock, service catalog, service-order opening/status/history) and **orchestrator of the service-order Saga**. It is the Fase 3 monolith reduced for Fase 4 (docs and READMEs are in Portuguese): budgets/approval/payment moved to `../billing-service`, diagnosis/repair moved to `../execution-service`. The three services talk only through RabbitMQ; none reads another's database. To run them together use `../docker-compose.yaml`; `../scripts/saga_demo.py` drives the flows end to end.
+
+Related repos of the previous phases (in the workspace root, two levels up):
+
+- `mechanic-shop-pos-tech-challenger-lambda`: CPF-login Lambda (Java, Maven). Issues the JWT (HS256) after calling this API's `GET /internal/customers/{cpf}/status`. `JWT_SECRET`, `JWT_ISSUER` and `INTERNAL_API_SECRET` must match this API's values.
+- `mechanic-shop-pos-tech-challenger-kubernetes`: Terraform for VPC/EKS (`terraform/`), Lambda infra (`lambda/`), New Relic (`observability/`).
+- `mechanic-shop-pos-tech-challenger-managed-database`: Terraform for private RDS PostgreSQL (needs VPC outputs from the kubernetes repo).
+
+Request path: Kong gateway (`kong/kong.yml`, port 8000) → this API (8080); `POST /functions/cpf-login` is routed by Kong to the Lambda. Customer routes are additionally protected at Kong.
+
+## Commands
+
+```bash
+docker compose up --build          # this service alone (Kong :8000, API :8080, Postgres, RabbitMQ :15672, Mailpit :8025, pgAdmin :5050); uses .env
+docker compose down -v             # also wipes local DB volume
+./mvnw test                        # unit tests
+./mvnw verify                      # what CI runs: unit + IT (needs Docker) + BDD + 80% merged coverage gate
+./mvnw spring-boot:run             # needs SPRING_DATASOURCE_URL/USERNAME/PASSWORD pointing at a Postgres
+./mvnw test -Dtest=ClassName#method   # single test
+```
+
+Swagger: `http://localhost:8080/swagger-ui.html`; health: `/actuator/health`. Load tests live in `k6/` (see its README).
+
+CI (`.github/workflows/ci-cd.yml`, branch `master`): `./mvnw verify` on PRs; on push also builds/pushes the Docker image and renders/applies `k8s/` manifests to EKS (secrets/vars come from GitHub, DB creds as `DATABASE_*`).
+
+## Architecture
+
+Package root `org.project.mechanic_shop`, hexagonal-style layering:
+
+- `domain/`: entities (one subpackage each, e.g. `service_order`, `saga`), enums, DTOs, domain events, validation. Entities are domain objects, not JPA entities.
+- `application/`: services (`services/impl`), `ports/` (repository ports, `EmailService`, `SagaCommandPublisher`, `ProcessedMessagePort`), `saga/` (orchestrator, message types and payloads), `mappers`, `validators`, and `listeners` that react to domain events (`ServiceOrderNotificationListener`, `StockNotificationListener`) to send email asynchronously.
+- `infrastructure/`: `jpa/entities` + `jpa/repositories` + `jpa/mappers` (persistence model, mapped to/from domain), `adapters/` implementing the ports, `messaging/` (RabbitMQ topology, reply listener, outbox relay, Saga timeout scheduler), `http/` outbound clients.
+- `presentation/`: controllers and middlewares.
+- `shared/config/`: security (JWT + role-based authz), swagger, jpa, observability (New Relic), system config; `shared/exception`.
+
+When adding a persistence feature: domain entity → port in `application/ports` → JPA entity/mapper/repository + adapter in `infrastructure`.
+
+Service-order status flow: `RECEIVED` → `DIAGNOSIS` → `PENDING_APPROVAL` → `PENDING_PAYMENT` → `IN_PROGRESS` → `COMPLETED` → `DELIVERED`; `CANCELED` on budget rejection or Saga compensation. Only opening and delivery are REST actions here; every other transition is made by `ServiceOrderSagaOrchestrator` when a reply arrives.
+
+Saga rules to keep when changing it: one reply = one local transaction (lock the saga row, check the step, change the order, write the next command to the outbox); commands go through `SagaCommandPublisher` (outbox), never straight to RabbitMQ; handlers must stay idempotent and ignore replies for a step the Saga is not waiting at; do not catch exceptions thrown by `@Transactional` beans inside a handler (the transaction is already rollback-only) — check through repository ports first. The message contract (`SagaMessage`, type names, payloads) is duplicated in the three services: change all three together.
+
+Tests: `saga/SagaTestHarness` wires the real orchestrator to in-memory ports; it backs both `ServiceOrderSagaOrchestratorTest` and the Cucumber steps (`bdd/`, features in `src/test/resources/features`).
+
+Config: `application.yaml` (Hibernate `ddl-auto: update`, no migration tool; Saga timeouts under `app.saga`), `application-prod.yaml`, `application-test.yaml` (`create-only`). Deployment manifests in `k8s/`, the CI workflow and `k6/` are still the Fase 3 ones (no RabbitMQ, old endpoints); local kind setup under `docs/infra`; architecture docs (C4, components) in `docs/architecture`; New Relic notes in `docs/observability`.

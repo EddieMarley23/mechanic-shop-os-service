@@ -103,4 +103,26 @@ public class StockItemServiceImpl implements StockItemService {
 		repository.save(item);
 		return isShortage;
 	}
+
+	/**
+	 * Undoes a {@link #withdrawStock} as part of a Saga compensation. Units that had been recorded
+	 * as pending demand (the withdrawal found a shortage) are cancelled first; the rest goes back
+	 * to the shelf.
+	 */
+	@Override
+	@Transactional
+	public void restoreStock(UUID externalId, Integer returnedQuantity) {
+		StockItem item = repository
+			.findWithLockByExternalId(externalId)
+			.orElseThrow(() -> new EntityNotFoundException("Part not found for External ID: " + externalId));
+
+		int pendingDemand = item.getPendingDemand() != null ? item.getPendingDemand() : 0;
+		int cancelledDemand = Math.min(pendingDemand, returnedQuantity);
+
+		item.setPendingDemand(pendingDemand - cancelledDemand);
+		item.setQuantity(item.getQuantity() + returnedQuantity - cancelledDemand);
+
+		repository.save(item);
+		log.info("Stock restored for part {}: {} unit(s) returned.", item.getCode(), returnedQuantity);
+	}
 }

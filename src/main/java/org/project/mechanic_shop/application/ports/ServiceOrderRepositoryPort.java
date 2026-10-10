@@ -12,7 +12,6 @@ import org.springframework.data.domain.Pageable;
 public interface ServiceOrderRepositoryPort {
 	ServiceOrder save(ServiceOrder order);
 	Optional<ServiceOrder> findByExternalId(UUID externalId);
-	Optional<ServiceOrder> findByApprovalToken(String approvalToken);
 	Double findAverageCompletionDays();
 	Long countCompletedOrders();
 	Page<ServiceOrder> findActiveOrders(

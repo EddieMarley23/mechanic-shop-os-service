@@ -19,6 +19,12 @@ public final class ObservabilityEvents {
 	/** One event per outbound integration failure (SMTP, HTTP, …) — feeds the integrations widget. */
 	public static final String INTEGRATION_FAILURE = "MechanicShopIntegrationFailure";
 
+	/** One event per step of a service order Saga — feeds the distributed flow widgets. */
+	public static final String SAGA_TRANSITION = "MechanicShopSagaTransition";
+
+	/** One event per failure while handling a Saga message. Same event name in the three services. */
+	public static final String SAGA_FAILURE = "MechanicShopSagaFailure";
+
 	/** Business phases reported by {@link #SERVICE_ORDER_STATUS_CHANGED}. */
 	public static final String PHASE_DIAGNOSIS = "DIAGNOSIS";
 	public static final String PHASE_EXECUTION = "EXECUTION";

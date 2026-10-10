@@ -7,6 +7,7 @@ public enum ServiceOrderStatusEnum {
 	RECEIVED("Received", "Initial phase. Awaiting diagnosis."),
 	DIAGNOSIS("In Diagnosis", "Mechanic is evaluating the vehicle and adding items."),
 	PENDING_APPROVAL("Pending Approval", "Awaiting customer approval."),
+	PENDING_PAYMENT("Pending Payment", "Budget approved and stock reserved. Awaiting payment."),
 	IN_PROGRESS("In Progress", "Mechanic is currently working on the vehicle."),
 	COMPLETED("Completed", "Service finished. Awaiting customer pickup."),
 	DELIVERED("Delivered", "Vehicle handed over to the customer. Process closed."),

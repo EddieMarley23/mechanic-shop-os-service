@@ -18,6 +18,22 @@ spring:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        # A reply that keeps failing is retried in memory and then rejected without requeue,
+        # which routes it to the dead-letter queue declared in RabbitTopologyConfig.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-retries: 3
+          initial-interval: 1s
+          multiplier: 2
+
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
@@ -57,6 +73,9 @@ management:
     # o que quebraria a metrica de uptime do Synthetics.
     mail:
       enabled: false
+    # A broker outage is absorbed by the outbox and should not take the pod out of rotation.
+    rabbit:
+      enabled: false
   info:
     env:
       enabled: true
@@ -78,6 +97,15 @@ internal:
 
 app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:1000}
+    batch-size: 50
+  saga:
+    # How long the Saga waits at each step before compensating (ISO-8601 or Spring duration format).
+    budget-generation-timeout: ${SAGA_BUDGET_GENERATION_TIMEOUT:5m}
+    approval-timeout: ${SAGA_APPROVAL_TIMEOUT:72h}
+    payment-timeout: ${SAGA_PAYMENT_TIMEOUT:24h}
+    timeout-check-interval-ms: ${SAGA_TIMEOUT_CHECK_INTERVAL_MS:30000}
   seed:
     password: ${SEED_DEFAULT_PASSWORD:''}
     warehouse:

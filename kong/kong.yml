@@ -11,14 +11,6 @@ services:
     routes:
       # Customer-sensitive routes (see README's role matrix): gated by the
       # jwt plugin here, on top of (not instead of) Spring's own @PreAuthorize.
-      - name: service-orders-budget-response
-        methods: ["POST"]
-        strip_path: false
-        regex_priority: 100
-        paths:
-          - "~/api/service-orders/[0-9a-fA-F-]{36}/budget-response$"
-        plugins:
-          - name: jwt
       - name: service-orders-status
         methods: ["GET"]
         strip_path: false
@@ -60,7 +52,7 @@ services:
         plugins:
           - name: jwt
 
-      # Everything else (login, the public budget-approval email link, swagger,
+      # Everything else (login, swagger,
       # actuator, staff-only endpoints): no gateway-level JWT check, Spring's
       # own SecurityFilter/@PreAuthorize already fully governs these.
       - name: springapp-general

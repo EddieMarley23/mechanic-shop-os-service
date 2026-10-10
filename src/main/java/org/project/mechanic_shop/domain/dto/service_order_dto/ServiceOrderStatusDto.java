@@ -1,7 +1,6 @@
 package org.project.mechanic_shop.domain.dto.service_order_dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import org.project.mechanic_shop.domain.enums.BudgetStatusEnum;
 import org.project.mechanic_shop.domain.enums.ServiceOrderStatusEnum;
 
 import java.time.LocalDateTime;
@@ -15,8 +14,6 @@ public record ServiceOrderStatusDto(
 	@Schema(description = "Current workflow status", example = "DIAGNOSIS")
 	ServiceOrderStatusEnum status,
 
-	@Schema(description = "Current budget status", example = "OPEN")
-	BudgetStatusEnum budgetStatus,
 
 	@Schema(description = "Estimated completion date")
 	LocalDateTime estimatedCompletionDate,
