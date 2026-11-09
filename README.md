@@ -117,7 +117,18 @@ As rotas de cliente são adicionalmente protegidas pelo Kong. O login por CPF é
 
 - Testes unitários e de integração (PostgreSQL real) das fases anteriores, atualizados.
 - BDD em `src/test/resources/features/saga_ordem_de_servico.feature`: 6 cenários da Saga (fluxo completo, recusa, pagamento recusado, reparo inviável, prazo expirado e entrega duplicada).
-- O build falha se a cobertura de linhas, somando unitários e integração, ficar abaixo de 80%. Medição em 10/10/2026: **186 testes unitários + 27 de integração, 84,7% de linhas** (`target/site/jacoco-merged/index.html`).
+- O build falha se a cobertura de linhas, somando unitários e integração, ficar abaixo de 80%.
+
+### Evidência de cobertura
+
+Medição de 09/11/2026 (`./mvnw verify`, todos os testes passando):
+
+| Testes | Linhas | Condições | Cobertura no SonarCloud (linhas + condições) |
+|---|---|---|---|
+| 224 unitários + 27 de integração | 88,2% | 75,3% | **85,8%** |
+
+- Relatório JaCoCo local: `target/site/jacoco-merged/index.html` (unitários + integração).
+- No CI, todo PR e todo push publica o relatório como artefato `coverage-report` do workflow e envia a cobertura ao SonarCloud, cujo quality gate precisa passar: [painel do projeto](https://sonarcloud.io/summary/overall?id=EddieMarley23_mechanic-shop-os-service).
 
 ## Implantação
 

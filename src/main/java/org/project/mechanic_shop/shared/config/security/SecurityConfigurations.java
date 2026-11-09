@@ -27,7 +27,9 @@ public class SecurityConfigurations {
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) {
 		return http
-			.csrf(AbstractHttpConfigurer::disable)
+			// Stateless API authenticated by a Bearer token in the Authorization header: there are no
+			// session cookies for a browser to send automatically, so there is nothing for CSRF to forge.
+			.csrf(AbstractHttpConfigurer::disable) // NOSONAR java:S4502 - see the comment above
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(authorize ->
 				authorize
