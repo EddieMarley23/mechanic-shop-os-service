@@ -9,6 +9,11 @@ data:
   SMTP_PORT: "1025"
   APP_BASE_URL: "${app_base_url}"
 
+  # ---------- Saga ----------
+  # Service `rabbitmq` (k8s/03-app/20-rabbitmq-*.yaml). Usuario e senha vem do Secret.
+  RABBITMQ_HOST: "rabbitmq"
+  RABBITMQ_PORT: "5672"
+
   # ---------- Observability ----------
   # Activates application-prod.yaml, which turns on the structured (JSON) log format.
   SPRING_PROFILES_ACTIVE: "prod"

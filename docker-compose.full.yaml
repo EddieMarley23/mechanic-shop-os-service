@@ -1,0 +1,192 @@
+# Ambiente completo da Fase 4: os tres microsservicos, cada um com seu banco, o RabbitMQ da Saga,
+# o Kong como entrada unica e o Mailpit.
+#
+# Requer os tres repositorios clonados lado a lado:
+#   ./mechanic-shop-os-service          (este repositorio)
+#   ../mechanic-shop-billing-service
+#   ../mechanic-shop-execution-service
+#
+# Uso:  docker compose -f docker-compose.full.yaml up --build -d
+#       ./scripts/saga_e2e.sh happy        # fluxo completo pela API
+#       docker compose -f docker-compose.full.yaml down -v
+#
+# Variaveis (JWT_SECRET, SEED_*, SMTP_*, NEW_RELIC_LICENSE_KEY) vem do .env deste diretorio.
+# JWT_SECRET precisa ser igual ao segredo do consumer em kong/kong.yml.
+# As portas publicadas podem ser trocadas por variavel (ex.: OS_PORT=18080) se ja estiverem em uso.
+name: mechanic-shop
+
+x-saga-env: &saga-env
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-me}
+  JWT_ISSUER: mechanic-shop-api
+  NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:-}
+  NEW_RELIC_AGENT_ENABLED: ${NEW_RELIC_AGENT_ENABLED:-true}
+
+services:
+  # ---------- Infraestrutura compartilhada ----------
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    environment:
+      MP_MAX_MESSAGES: 5000
+
+  kong:
+    image: kong:3.7
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_NGINX_WORKER_PROCESSES: "2"
+      # Os IPs dos containers mudam quando um servico e recriado; sem isto o Kong segue usando o
+      # IP antigo em cache (DNS do Docker responde com TTL de 600s) e devolve 502.
+      KONG_DNS_VALID_TTL: "5"
+      KONG_DNS_STALE_TTL: "0"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+    volumes:
+      - ./kong/kong.yml:/kong/declarative/kong.yml:ro
+    ports:
+      - "${KONG_PORT:-8000}:8000"
+    depends_on:
+      springapp: { condition: service_started }
+      billing-service: { condition: service_started }
+      execution-service: { condition: service_started }
+
+  # ---------- OS Service (PostgreSQL) ----------
+  os-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: mechanic-shop-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - os_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mechanic-shop-db"]
+      interval: 5s
+      retries: 20
+
+  # O nome `springapp` e o upstream do OS Service em kong/kong.yml.
+  springapp:
+    build: .
+    ports:
+      - "127.0.0.1:${OS_PORT:-8080}:8080"
+    depends_on:
+      os-db: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      <<: *saga-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://os-db:5432/mechanic-shop-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      APP_BASE_URL: http://localhost:${KONG_PORT:-8000}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-shared-secret-change-me}
+      NEW_RELIC_APP_NAME: mechanic-shop-os (Local)
+      NEW_RELIC_LABELS: env:local;service:os-service
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD}
+      SEED_WH_NAME: ${SEED_WH_NAME}
+      SEED_WH_EMAIL: ${SEED_WH_EMAIL}
+      SEED_WH_DOC: ${SEED_WH_DOC}
+      SEED_WH_ROLE: ${SEED_WH_ROLE}
+      SEED_RC_NAME: ${SEED_RC_NAME}
+      SEED_RC_EMAIL: ${SEED_RC_EMAIL}
+      SEED_RC_DOC: ${SEED_RC_DOC}
+      SEED_RC_ROLE: ${SEED_RC_ROLE}
+      SEED_MC_NAME: ${SEED_MC_NAME}
+      SEED_MC_EMAIL: ${SEED_MC_EMAIL}
+      SEED_MC_DOC: ${SEED_MC_DOC}
+      SEED_MC_ROLE: ${SEED_MC_ROLE}
+      SEED_AD_NAME: ${SEED_AD_NAME}
+      SEED_AD_EMAIL: ${SEED_AD_EMAIL}
+      SEED_AD_DOC: ${SEED_AD_DOC}
+      SEED_AD_ROLE: ${SEED_AD_ROLE}
+      SEED_BY_NAME: ${SEED_BY_NAME}
+      SEED_BY_EMAIL: ${SEED_BY_EMAIL}
+      SEED_BY_DOC: ${SEED_BY_DOC}
+      SEED_BY_ROLE: ${SEED_BY_ROLE}
+      SMTP_ACTIVE: ${SMTP_ACTIVE:-true}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
+  # ---------- Billing Service (PostgreSQL proprio) ----------
+  billing-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: billing-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - billing_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d billing-db"]
+      interval: 5s
+      retries: 20
+
+  billing-service:
+    build: ../mechanic-shop-billing-service
+    ports:
+      - "127.0.0.1:${BILLING_PORT:-8081}:8081"
+    depends_on:
+      billing-db: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      <<: *saga-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://billing-db:5432/billing-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      # Links de aprovacao do e-mail apontam para o Kong.
+      APP_BASE_URL: http://localhost:${KONG_PORT:-8000}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-simulated}
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
+      MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET:-}
+      # URL do webhook que o Mercado Pago chama. Precisa ser publica (ex.: tunel ngrok para o Kong).
+      MERCADOPAGO_NOTIFICATION_URL: ${MERCADOPAGO_NOTIFICATION_URL:-http://localhost:${KONG_PORT:-8000}/api/billing/webhooks/mercadopago}
+      SMTP_ACTIVE: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      NEW_RELIC_APP_NAME: mechanic-shop-billing (Local)
+      NEW_RELIC_LABELS: env:local;service:billing-service
+
+  # ---------- Execution Service (MongoDB proprio) ----------
+  # O outbox usa transacoes do MongoDB, que exigem replica set: o healthcheck inicia um de um no.
+  execution-db:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - execution_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'execution-db:27017'}]}).ok }"]
+      interval: 5s
+      retries: 30
+
+  execution-service:
+    build: ../mechanic-shop-execution-service
+    ports:
+      - "127.0.0.1:${EXECUTION_PORT:-8082}:8082"
+    depends_on:
+      execution-db: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      <<: *saga-env
+      MONGODB_URI: mongodb://execution-db:27017/execution-db?replicaSet=rs0
+      NEW_RELIC_APP_NAME: mechanic-shop-execution (Local)
+      NEW_RELIC_LABELS: env:local;service:execution-service
+
+volumes:
+  os_data:
+  billing_data:
+  execution_data:

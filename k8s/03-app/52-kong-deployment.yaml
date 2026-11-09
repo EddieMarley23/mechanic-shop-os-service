@@ -25,6 +25,10 @@ spec:
           env:
             - name: KONG_DATABASE
               value: "off"
+            # O padrao (auto) cria um worker por CPU do no, e nao do limite do container:
+            # em nos com muitas CPUs o Kong estoura o limite de memoria (OOMKilled).
+            - name: KONG_NGINX_WORKER_PROCESSES
+              value: "2"
             - name: KONG_DECLARATIVE_CONFIG
               value: /kong/declarative/kong.yml
             - name: KONG_PROXY_LISTEN
