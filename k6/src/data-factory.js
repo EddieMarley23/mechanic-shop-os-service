@@ -98,7 +98,8 @@ export function buildServiceOrderPayload(vehicleExternalId, mechanicExternalId) 
   };
 }
 
-export function buildQuotePayload(partExternalId, mechanicServiceExternalId) {
+// Diagnostico registrado pelo mecanico no Execution Service (POST /api/executions/{id}/diagnosis/complete).
+export function buildDiagnosisPayload(partExternalId, mechanicServiceExternalId) {
   return {
     mechanicDiagnosis: pickOne(diagnoses),
     parts: [

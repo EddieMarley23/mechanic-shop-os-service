@@ -32,7 +32,8 @@ export function request(method, path, { token, body, params = {}, expectedStatus
   });
 
   const success = check(response, {
-    [`${method} ${path} -> ${expectedStatus}`]: (res) => res.status === expectedStatus,
+    // Agrupa pelo fluxo quando houver: caminhos com o id da OS gerariam um check por OS.
+    [`${method} ${tags.flow || path} -> ${expectedStatus}`]: (res) => res.status === expectedStatus,
   });
 
   if (!success) {
@@ -50,4 +51,14 @@ export function request(method, path, { token, body, params = {}, expectedStatus
 export function getData(method, path, options) {
   const { payload } = request(method, path, options);
   return payload?.data;
+}
+
+// GET sem check: usado para aguardar passos assincronos da Saga (404/estado antigo sao esperados).
+export function peek(path, token, tags = {}) {
+  const response = http.get(`${config.baseUrl}${path}`, {
+    headers: buildHeaders(token),
+    tags: { ...tags, polling: 'true' },
+    responseCallback: http.expectedStatuses({ min: 200, max: 499 }),
+  });
+  return { status: response.status, data: parseBody(response)?.data };
 }

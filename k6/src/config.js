@@ -1,13 +1,22 @@
-import { Rate } from 'k6/metrics';
+import { Counter, Rate, Trend } from 'k6/metrics';
 
 export const businessErrors = new Rate('business_errors');
+// Tempo de ponta a ponta de uma OS pela Saga (abertura -> DELIVERED), em ms.
+export const sagaFlowDuration = new Trend('saga_flow_duration', true);
+// Tempo que cada passo assincrono levou para refletir no servico seguinte, em ms.
+export const sagaStepLatency = new Trend('saga_step_latency', true);
+// Passos assincronos que nao chegaram dentro do prazo (SAGA_STEP_TIMEOUT).
+export const sagaStepTimeouts = new Counter('saga_step_timeouts');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+// Kong: entrada unica para OS (/api), Billing (/api/billing) e Execution (/api/executions).
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:8000';
 const SCENARIO = (__ENV.SCENARIO || 'all').toLowerCase();
 
 export const config = {
   baseUrl: BASE_URL.replace(/\/$/, ''),
   scenarioSelection: SCENARIO,
+  sagaStepTimeoutSeconds: Number(__ENV.SAGA_STEP_TIMEOUT || 30),
+  sagaPollIntervalSeconds: Number(__ENV.SAGA_POLL_INTERVAL || 0.5),
   credentials: {
     admin: {
       email: __ENV.ADMIN_EMAIL || 'admin@shop.com',
@@ -33,12 +42,26 @@ function defaultThresholds() {
     http_req_failed: ['rate<0.05'],
     http_req_duration: ['p(95)<2000', 'p(99)<4000'],
     business_errors: ['rate<0.10'],
+    saga_flow_duration: ['p(95)<60000'],
+    saga_step_latency: ['p(95)<5000'],
+    saga_step_timeouts: ['count<1'],
   };
 }
 
 export function buildOptions() {
   const thresholds = defaultThresholds();
   const scenarios = {};
+
+  // Fumaca: 1 VU, poucas iteracoes. Bom para validar o ambiente antes da carga.
+  if (config.scenarioSelection === 'smoke') {
+    scenarios.smoke = {
+      executor: 'per-vu-iterations',
+      exec: 'smoke',
+      vus: 1,
+      iterations: Number(__ENV.SMOKE_ITERATIONS || 3),
+      tags: { test_type: 'smoke' },
+    };
+  }
 
   if (config.scenarioSelection === 'all' || config.scenarioSelection === 'baseline') {
     scenarios.baseline = {
