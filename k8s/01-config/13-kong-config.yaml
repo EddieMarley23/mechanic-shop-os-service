@@ -24,14 +24,6 @@ data:
           # Rotas sensiveis ao cliente (ver matriz de papeis no README):
           # protegidas pelo plugin jwt aqui, somando-se ao @PreAuthorize do
           # Spring em vez de substitui-lo.
-          - name: service-orders-budget-response
-            methods: ["POST"]
-            strip_path: false
-            regex_priority: 100
-            paths:
-              - "~/api/service-orders/[0-9a-fA-F-]{36}/budget-response$"
-            plugins:
-              - name: jwt
           - name: service-orders-status
             methods: ["GET"]
             strip_path: false
@@ -82,8 +74,7 @@ data:
             paths:
               - "/internal"
 
-          # Todo o resto (login, link publico de aprovacao de orcamento por
-          # e-mail, swagger e actuator): sem checagem de JWT
+          # Todo o resto (login, swagger e actuator): sem checagem de JWT
           # no gateway, o SecurityFilter/@PreAuthorize do Spring ja governa.
           - name: springapp-general
             strip_path: false
@@ -95,6 +86,39 @@ data:
               - "/swagger-resources"
               - "/swagger-ui"
               - "/webjars"
+
+      # Billing Service (orcamento, aprovacao e pagamento). O prefixo
+      # /api/billing e mais longo que /api, entao o Kong o prefere ao
+      # `springapp-general`.
+      - name: billing-service
+        url: http://billing-service:8081
+        routes:
+          # Rotas do cliente dono da OS: JWT exigido no gateway, alem do Spring.
+          - name: billing-customer
+            methods: ["GET", "POST"]
+            strip_path: false
+            regex_priority: 100
+            paths:
+              - "~/api/billing/budgets/[0-9a-fA-F-]{36}(/response)?$"
+              - "~/api/billing/payments/[0-9a-fA-F-]{36}(/simulate)?$"
+            plugins:
+              - name: jwt
+          # Link de aprovacao do e-mail (token de uso unico), webhook do
+          # Mercado Pago (assinatura) e Swagger: sem JWT no gateway.
+          - name: billing-general
+            strip_path: false
+            paths:
+              - "/api/billing"
+
+      # Execution Service (fila, diagnostico e reparo). Rotas so da equipe;
+      # o Spring Security do servico aplica JWT e perfil.
+      - name: execution-service
+        url: http://execution-service:8082
+        routes:
+          - name: execution-general
+            strip_path: false
+            paths:
+              - "/api/executions"
 
       - name: cpf-login-function
         # Kong invokes the Terraform-managed Lambda directly. There is no API

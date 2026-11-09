@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-OS Service: Spring Boot 4 / Java 21 REST API for a mechanic shop (customers, vehicles, stock, service catalog, service-order opening/status/history) and **orchestrator of the service-order Saga**. It is the Fase 3 monolith reduced for Fase 4 (docs and READMEs are in Portuguese): budgets/approval/payment moved to `../billing-service`, diagnosis/repair moved to `../execution-service`. The three services talk only through RabbitMQ; none reads another's database. To run them together use `../docker-compose.yaml`; `../scripts/saga_demo.py` drives the flows end to end.
+OS Service: Spring Boot 4 / Java 21 REST API for a mechanic shop (customers, vehicles, stock, service catalog, service-order opening/status/history) and **orchestrator of the service-order Saga**. It is the Fase 3 monolith reduced for Fase 4 (docs and READMEs are in Portuguese): budgets/approval/payment moved to `../billing-service`, diagnosis/repair moved to `../execution-service`. The three services talk only through RabbitMQ; none reads another's database. To run them together use `docker-compose.full.yaml` in this repo (expects the other two repos as sibling directories; Kong on :8000 is the single entry point); `scripts/saga_e2e.sh <happy|budget_rejected|payment_refused|repair_failed>` drives the flows end to end through Kong.
 
 Related repos of the previous phases (in the workspace root, two levels up):
 
@@ -27,7 +27,7 @@ docker compose down -v             # also wipes local DB volume
 
 Swagger: `http://localhost:8080/swagger-ui.html`; health: `/actuator/health`. Load tests live in `k6/` (see its README).
 
-CI (`.github/workflows/ci-cd.yml`, branch `master`): `./mvnw verify` on PRs; on push also builds/pushes the Docker image and renders/applies `k8s/` manifests to EKS (secrets/vars come from GitHub, DB creds as `DATABASE_*`).
+CI (`.github/workflows/ci-cd.yml`, branch `master`): `./mvnw verify` + coverage artifact + SonarQube (when `SONAR_TOKEN` is set) on PRs; on push also builds/pushes the Docker image and renders/applies `k8s/` manifests to EKS (secrets/vars come from GitHub, DB creds as `DATABASE_*`, broker creds as `RABBITMQ_*`). Run this pipeline before Billing/Execution on a fresh cluster.
 
 ## Architecture
 
@@ -47,4 +47,4 @@ Saga rules to keep when changing it: one reply = one local transaction (lock the
 
 Tests: `saga/SagaTestHarness` wires the real orchestrator to in-memory ports; it backs both `ServiceOrderSagaOrchestratorTest` and the Cucumber steps (`bdd/`, features in `src/test/resources/features`).
 
-Config: `application.yaml` (Hibernate `ddl-auto: update`, no migration tool; Saga timeouts under `app.saga`), `application-prod.yaml`, `application-test.yaml` (`create-only`). Deployment manifests in `k8s/`, the CI workflow and `k6/` are still the Fase 3 ones (no RabbitMQ, old endpoints); local kind setup under `docs/infra`; architecture docs (C4, components) in `docs/architecture`; New Relic notes in `docs/observability`.
+Config: `application.yaml` (Hibernate `ddl-auto: update`, no migration tool; Saga timeouts under `app.saga`), `application-prod.yaml`, `application-test.yaml` (`create-only`). Deployment manifests in `k8s/` also deploy the shared RabbitMQ, Kong (routes `/api/billing/**` and `/api/executions/**` to the other services) and Mailpit; CI adds an optional SonarQube step (`SONAR_TOKEN`). `k6/` load-tests the whole Saga through Kong (`SCENARIO=smoke|baseline|stress|spike`); local kind setup under `docs/infra`; architecture docs in `docs/architecture` (C4 of the distributed system, `saga.md`, AWS deployment); New Relic notes in `docs/observability`.

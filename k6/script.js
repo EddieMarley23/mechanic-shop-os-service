@@ -32,6 +32,11 @@ function runMixedWorkload(context, scenarioName) {
   sleep(randomBetween(1, 3));
 }
 
+// Uma OS por iteracao, sempre pela Saga completa: valida o ambiente antes da carga.
+export function smoke(data) {
+  runServiceOrderJourney(data, exec.scenario.name || 'smoke');
+}
+
 export function baseline(data) {
   runMixedWorkload(data, exec.scenario.name || 'baseline');
 }

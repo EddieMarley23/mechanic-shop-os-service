@@ -13,14 +13,47 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # SonarQube usa o historico para blame e codigo novo
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - run: ./mvnw --batch-mode verify
+
+      # Unitarios + integracao (Testcontainers) + BDD; falha abaixo de 80% de linhas (merge).
+      - name: Build and test
+        run: ./mvnw --batch-mode verify
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/site/jacoco-merged/
+          if-no-files-found: ignore
+
+      # Analise de qualidade com quality gate. Configure o secret SONAR_TOKEN e as variables
+      # SONAR_PROJECT_KEY, SONAR_ORGANIZATION (SonarCloud) e, para SonarQube proprio, SONAR_HOST_URL.
+      - name: SonarQube analysis
+        if: env.SONAR_TOKEN != ''
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'mechanic-shop-os-service' }}
+        run: |
+          args=(
+            -Dsonar.host.url="$SONAR_HOST_URL"
+            -Dsonar.projectKey="$SONAR_PROJECT_KEY"
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco-merged/jacoco.xml
+            -Dsonar.qualitygate.wait=true
+          )
+          if [ -n "$SONAR_ORGANIZATION" ]; then args+=(-Dsonar.organization="$SONAR_ORGANIZATION"); fi
+          ./mvnw --batch-mode org.sonarsource.scanner.maven:sonar-maven-plugin:5.0.0.4389:sonar "${args[@]}"
 
   deploy:
     needs: test
@@ -76,10 +109,17 @@ jobs:
           SEED_DEFAULT_PASSWORD: ${{ secrets.SEED_DEFAULT_PASSWORD }}
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
           NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
+          RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
         run: |
+          render() { find "$@" -type f -name '*.yaml' -print0 | xargs -0 -I{} sh -c 'envsubst < "$1" | kubectl apply -f -' sh {}; }
           kubectl apply -f k8s/03-cluster-addons
-          find k8s/00-namespaces k8s/01-config k8s/03-app -type f -name '*.yaml' -print0 | \
-            xargs -0 -I{} sh -c 'envsubst < "$1" | kubectl apply -f -' sh {}
+          render k8s/00-namespaces
+          # Secrets antes dos Deployments, para nenhum pod subir sem credenciais.
+          kubectl create secret generic rabbitmq-secret --namespace mechanic-shop \
+            --from-literal=RABBITMQ_USERNAME="$RABBITMQ_USERNAME" \
+            --from-literal=RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic mechanic-shop-app-secret --namespace mechanic-shop \
             --from-literal=SPRING_DATASOURCE_URL="$DATABASE_URL" \
             --from-literal=SPRING_DATASOURCE_USERNAME="$DATABASE_USERNAME" \
@@ -88,6 +128,14 @@ jobs:
             --from-literal=INTERNAL_API_SECRET="$INTERNAL_API_SECRET" \
             --from-literal=JWT_SECRET="$jwt_secret" \
             --from-literal=NEW_RELIC_LICENSE_KEY="$NEW_RELIC_LICENSE_KEY" \
+            --from-literal=RABBITMQ_USERNAME="$RABBITMQ_USERNAME" \
+            --from-literal=RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
+          # Hashes da configuracao: reiniciam a API e o Kong quando so a configuracao muda
+          # (o Kong le o kong.yml apenas no boot).
+          export kong_config_checksum=$(envsubst < k8s/01-config/13-kong-config.yaml | sha256sum | cut -c1-16)
+          export config_checksum=$( { envsubst < k8s/01-config/10-app-configmap.yaml; kubectl get secret mechanic-shop-app-secret --namespace mechanic-shop -o jsonpath='{.data}'; } | sha256sum | cut -c1-16)
+          render k8s/01-config k8s/03-app
+          kubectl rollout status deployment/rabbitmq --namespace mechanic-shop --timeout=5m
           kubectl rollout status deployment/mechanic-shop-backend --namespace mechanic-shop --timeout=5m
           kubectl rollout status deployment/kong --namespace mechanic-shop --timeout=5m

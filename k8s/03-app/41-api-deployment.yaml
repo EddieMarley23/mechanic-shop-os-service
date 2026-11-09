@@ -12,6 +12,10 @@ spec:
     metadata:
       labels:
         app: mechanic-shop-backend
+      annotations:
+        # Hash do ConfigMap + Secret, calculado pelo pipeline: muda quando so a configuracao
+        # muda (ex.: PAYMENT_PROVIDER, credenciais) e forca o rollout mesmo com a mesma imagem.
+        checksum/config: "${config_checksum}"
     spec:
       containers:
         - name: mechanic-shop-backend
