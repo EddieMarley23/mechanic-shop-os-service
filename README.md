@@ -25,6 +25,8 @@ O Kong é o ponto de entrada das rotas expostas. A API aplica autenticação JWT
 
 ## Saga da ordem de serviço
 
+Detalhes, diagramas de sequência e catálogo de mensagens em [docs/architecture/saga.md](docs/architecture/saga.md). Arquitetura geral (C4) em [docs/architecture/c4-model.md](docs/architecture/c4-model.md) e implantação na AWS em [docs/architecture/component-diagram.md](docs/architecture/component-diagram.md).
+
 **Estratégia: orquestrada**, com o orquestrador neste serviço (`application/saga/ServiceOrderSagaOrchestrator`).
 
 Por que orquestração e não coreografia:
@@ -64,7 +66,7 @@ Para executar localmente: Docker Desktop com Docker Compose. Para executar sem c
 docker compose up --build
 ```
 
-Este Compose sobe só este serviço e suas dependências (PostgreSQL, RabbitMQ, Mailpit, Kong). Uma OS aberta assim fica parada em `RECEIVED`, porque ninguém consome os comandos da Saga. Para o fluxo completo, suba os três serviços com o Compose da pasta que os reúne.
+Este Compose sobe só este serviço e suas dependências (PostgreSQL, RabbitMQ, Mailpit, Kong). Uma OS aberta assim fica parada em `RECEIVED`, porque ninguém consome os comandos da Saga. Para o fluxo completo, use o ambiente completo descrito abaixo.
 
 | Serviço | Endereço |
 |---|---|
@@ -76,6 +78,19 @@ Este Compose sobe só este serviço e suas dependências (PostgreSQL, RabbitMQ, 
 | pgAdmin | `http://localhost:5050` |
 
 Pare o ambiente com `docker compose down`. Para remover também o volume local do PostgreSQL, use `docker compose down -v` (isso apaga os dados locais).
+
+## Ambiente completo (três serviços)
+
+Com os três repositórios clonados lado a lado (`mechanic-shop-os-service`, `mechanic-shop-billing-service`, `mechanic-shop-execution-service`), rode na raiz deste repositório:
+
+```bash
+docker compose -f docker-compose.full.yaml up --build -d
+./scripts/saga_e2e.sh happy            # OS aberta e entregue pela Saga, tudo via Kong
+./scripts/saga_e2e.sh payment_refused  # também: budget_rejected, repair_failed
+docker compose -f docker-compose.full.yaml down -v
+```
+
+Sobe o OS Service (PostgreSQL), o Billing Service (PostgreSQL próprio), o Execution Service (MongoDB em replica set), o RabbitMQ, o Mailpit e o Kong, que passa a ser a entrada única em `http://localhost:8000`. As portas publicadas podem ser trocadas por variável (`KONG_PORT`, `OS_PORT`, `BILLING_PORT`, `EXECUTION_PORT`, `RABBITMQ_UI_PORT`, `MAILPIT_UI_PORT`) se já estiverem em uso. O script `saga_e2e.sh` imprime cada `curl` e confere o efeito nos três serviços; os testes de carga estão em [k6/](k6/README.md).
 
 ## Execução sem Docker
 
@@ -106,9 +121,18 @@ As rotas de cliente são adicionalmente protegidas pelo Kong. O login por CPF é
 
 ## Implantação
 
-Os manifests em `k8s/` e o workflow em `.github/workflows/` ainda são os da Fase 3: não incluem o RabbitMQ nem as variáveis da Saga, e a configuração do Kong em `k8s/01-config/13-kong-config.yaml` ainda aponta a rota de aprovação de orçamento para este serviço. A atualização do deploy faz parte da próxima etapa.
+O workflow `.github/workflows/ci-cd.yml` roda `./mvnw verify` (unitários, integração, BDD e gate de 80%) em todo PR para `master`, publica o relatório de cobertura como artefato e, se o secret `SONAR_TOKEN` existir, faz a análise no SonarQube/SonarCloud com quality gate. No push para `master`, publica a imagem no Docker Hub e aplica `k8s/` no EKS.
 
-Os testes de carga em `k6/` também são da Fase 3 e chamam endpoints que migraram para os outros serviços (`quote`, `request-approval`, `budget-response`, `finish`).
+Este repositório implanta também a infraestrutura compartilhada no namespace `mechanic-shop`: **RabbitMQ** (broker da Saga), Kong e Mailpit. Por isso, no primeiro deploy, rode este pipeline antes dos pipelines do Billing e do Execution.
+
+O Kong (`kong/kong.yml` local e `k8s/01-config/13-kong-config.yaml` no cluster) roteia `/api/billing/**` para o Billing Service e `/api/executions/**` para o Execution Service; o resto de `/api` continua vindo para este serviço. As rotas do cliente no Billing (orçamento e pagamento da OS) exigem JWT no gateway; o link de aprovação do e-mail e o webhook do Mercado Pago são públicos.
+
+| GitHub | Nome |
+|---|---|
+| Secrets | `AWS_ROLE_TO_ASSUME`, `DOCKERHUB_TOKEN`, `JWT_SECRET`, `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `SEED_DEFAULT_PASSWORD`, `INTERNAL_API_SECRET`, `NEW_RELIC_LICENSE_KEY`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`, `SONAR_TOKEN` (opcional) |
+| Variables | `AWS_REGION`, `DOCKERHUB_USERNAME`, `EKS_CLUSTER_NAME`, `APP_BASE_URL`, `LAMBDA_FUNCTION_NAME`, `NEW_RELIC_APP_NAME`, `SONAR_PROJECT_KEY`, `SONAR_ORGANIZATION`, `SONAR_HOST_URL` |
+
+`JWT_SECRET` e `RABBITMQ_USERNAME`/`RABBITMQ_PASSWORD` precisam ter o mesmo valor nos três repositórios.
 
 Banco existente: o status `PENDING_PAYMENT` é novo. Se a tabela `service_orders` foi criada pelo Hibernate antes desta versão, a restrição de valores da coluna `status` precisa ser removida ou recriada; o `ddl-auto: update` não faz isso.
 
