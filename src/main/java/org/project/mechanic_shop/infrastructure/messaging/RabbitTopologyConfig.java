@@ -13,9 +13,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Broker topology of the Saga.
  *
- * <p>The three services declare the whole topology with the same arguments. Declarations are
- * idempotent, so it does not matter which service starts first — and no message is dropped because
- * its destination queue did not exist yet.
+ * <p>OS owns shared exchanges and its reply queue. Participants own their command queues.
  *
  * <pre>
  * saga.commands (direct) ──billing────▶ billing.commands    ──▶ Billing Service
@@ -47,29 +45,17 @@ public class RabbitTopologyConfig {
 		TopicExchange events = new TopicExchange(EVENTS_EXCHANGE, true, false);
 		DirectExchange deadLetters = new DirectExchange(DEAD_LETTER_EXCHANGE, true, false);
 
-		Queue billingCommands = queueWithDeadLetter(BILLING_COMMANDS_QUEUE);
-		Queue executionCommands = queueWithDeadLetter(EXECUTION_COMMANDS_QUEUE);
 		Queue sagaReplies = queueWithDeadLetter(SAGA_REPLIES_QUEUE);
 
-		Queue billingDlq = deadLetterQueue(BILLING_COMMANDS_QUEUE);
-		Queue executionDlq = deadLetterQueue(EXECUTION_COMMANDS_QUEUE);
 		Queue sagaRepliesDlq = deadLetterQueue(SAGA_REPLIES_QUEUE);
 
 		return new Declarables(
 			commands,
 			events,
 			deadLetters,
-			billingCommands,
-			executionCommands,
 			sagaReplies,
-			billingDlq,
-			executionDlq,
 			sagaRepliesDlq,
-			BindingBuilder.bind(billingCommands).to(commands).with(BILLING_ROUTING_KEY),
-			BindingBuilder.bind(executionCommands).to(commands).with(EXECUTION_ROUTING_KEY),
 			BindingBuilder.bind(sagaReplies).to(events).with("#"),
-			deadLetterBinding(billingDlq, deadLetters),
-			deadLetterBinding(executionDlq, deadLetters),
 			deadLetterBinding(sagaRepliesDlq, deadLetters)
 		);
 	}

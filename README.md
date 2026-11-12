@@ -9,9 +9,7 @@ O que saiu deste serviço na Fase 4: orçamento, aprovação e pagamento foram p
 ```mermaid
 flowchart LR
   U[Cliente ou equipe] --> K[Kong API Gateway]
-  K --> A[OS Service]
-  K --> L[Lambda: login por CPF]
-  L -->|consulta interna| A
+  K -->|APIs e login por e-mail e senha| A[OS Service]
   A --> D[(PostgreSQL)]
   A -- comandos da Saga --> R{{RabbitMQ}}
   R -- respostas --> A
@@ -21,7 +19,7 @@ flowchart LR
   A --> N[New Relic]
 ```
 
-O Kong é o ponto de entrada das rotas expostas. A API aplica autenticação JWT e autorização por perfil. O JWT leva o papel do usuário no claim `role`, porque os outros serviços não têm tabela de usuários. O login por CPF é atendido pela Lambda do repositório específico. Mudanças de status da OS geram notificações assíncronas por e-mail; logs, health checks, eventos de negócio e cada passo da Saga são enviados ao New Relic quando configurado.
+O Kong é o ponto de entrada das rotas expostas. O login `POST /api/auth/login` do OS Service usa e-mail e senha e emite o JWT. A API aplica autenticação JWT e autorização por perfil. O JWT leva o papel do usuário no claim `role`, porque os outros serviços não têm tabela de usuários. Não há Lambda de login por CPF no deploy da Fase 4. Mudanças de status da OS geram notificações assíncronas por e-mail; logs, health checks, eventos de negócio e cada passo da Saga são enviados ao New Relic quando configurado.
 
 ## Saga da ordem de serviço
 
@@ -107,7 +105,7 @@ No Windows, substitua `./mvnw` por `./mvnw.cmd`. Para gerar o pacote, execute `.
 
 A documentação interativa está em [Swagger local](http://localhost:8080/swagger-ui.html). Primeiro obtenha um JWT em `POST /api/auth/login`; envie-o como `Authorization: Bearer <token>` nas rotas protegidas. A OS segue o fluxo `RECEIVED` → `DIAGNOSIS` → `PENDING_APPROVAL` → `PENDING_PAYMENT` → `IN_PROGRESS` → `COMPLETED` → `DELIVERED`, e termina `CANCELED` quando o orçamento é recusado ou a Saga é compensada. Este serviço abre a OS (`POST /api/service-orders/create`) e entrega o veículo (`POST /api/service-orders/{id}/deliver`); os demais avanços de status são feitos pela Saga, a partir das ações registradas no Execution Service (diagnóstico e reparo) e no Billing Service (aprovação e pagamento).
 
-As rotas de cliente são adicionalmente protegidas pelo Kong. O login por CPF é `POST /functions/cpf-login` no gateway, com corpo `{"document":"CPF_SEM_MASCARA"}`. Para usá-lo localmente, a Lambda e sua integração com o Kong devem estar previamente implantadas; o Compose desta aplicação não cria recursos AWS.
+As rotas de cliente são adicionalmente protegidas pelo Kong. O login usa `POST /api/auth/login` no gateway, com corpo `{"email":"usuario@exemplo.com","password":"senha"}`. Billing e Execution validam o JWT emitido pelo OS Service usando o mesmo `JWT_SECRET`.
 
 ## Testes
 
@@ -132,16 +130,16 @@ Medição de 09/11/2026 (`./mvnw verify`, todos os testes passando):
 
 ## Implantação
 
-O workflow `.github/workflows/ci-cd.yml` roda `./mvnw verify` (unitários, integração, BDD e gate de 80%) em todo PR para `master`, publica o relatório de cobertura como artefato e, se o secret `SONAR_TOKEN` existir, faz a análise no SonarQube/SonarCloud com quality gate. No push para `master`, publica a imagem no Docker Hub e aplica `k8s/` no EKS.
+O workflow `.github/workflows/ci-cd.yml` valida `terraform/` e roda `./mvnw verify` (unitários, integração, BDD e gate de 80%) em todo PR para `master`, publica o relatório de cobertura como artefato e, se o secret `SONAR_TOKEN` existir, faz a análise no SonarQube/SonarCloud com quality gate. No push para `master`, verifica credenciais AWS, cria ou reutiliza o state S3, provisiona EKS e RDS OS com Terraform, publica a imagem no Docker Hub e aplica `k8s/` no EKS. A configuração completa, incluindo **todos os secrets e variables de cada repositório**, está em [terraform/README.md](terraform/README.md).
 
-Este repositório implanta também a infraestrutura compartilhada no namespace `mechanic-shop`: **RabbitMQ** (broker da Saga), Kong e Mailpit. Por isso, no primeiro deploy, rode este pipeline antes dos pipelines do Billing e do Execution.
+Este repositório é o único dono da infraestrutura compartilhada no namespace `mechanic-shop`: **cluster EKS**, RabbitMQ (broker e exchanges da Saga), Kong, Mailpit e metrics-server. O OS declara sua fila de respostas; Billing e Execution declaram somente as respectivas filas. No primeiro deploy, rode este pipeline antes dos pipelines do Billing e do Execution. O banco RDS do OS também é provisionado aqui; os outros bancos pertencem aos próprios serviços.
 
 O Kong (`kong/kong.yml` local e `k8s/01-config/13-kong-config.yaml` no cluster) roteia `/api/billing/**` para o Billing Service e `/api/executions/**` para o Execution Service; o resto de `/api` continua vindo para este serviço. As rotas do cliente no Billing (orçamento e pagamento da OS) exigem JWT no gateway; o link de aprovação do e-mail e o webhook do Mercado Pago são públicos.
 
 | GitHub | Nome |
 |---|---|
-| Secrets | `AWS_ROLE_TO_ASSUME`, `DOCKERHUB_TOKEN`, `JWT_SECRET`, `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `SEED_DEFAULT_PASSWORD`, `INTERNAL_API_SECRET`, `NEW_RELIC_LICENSE_KEY`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`, `SONAR_TOKEN` (opcional) |
-| Variables | `AWS_REGION`, `DOCKERHUB_USERNAME`, `EKS_CLUSTER_NAME`, `APP_BASE_URL`, `LAMBDA_FUNCTION_NAME`, `NEW_RELIC_APP_NAME`, `SONAR_PROJECT_KEY`, `SONAR_ORGANIZATION`, `SONAR_HOST_URL` |
+| Secrets | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `DOCKERHUB_TOKEN`, `JWT_SECRET`, `DATABASE_PASSWORD`, `SEED_DEFAULT_PASSWORD`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`; `INTERNAL_API_SECRET`, `NEW_RELIC_LICENSE_KEY`, `SONAR_TOKEN` opcionais |
+| Variables | `DOCKERHUB_USERNAME`; opcionais: `AWS_REGION`, `EKS_CLUSTER_NAME`, `EKS_CLUSTER_ROLE_NAME`, `EKS_NODE_ROLE_NAME`, `APP_BASE_URL`, `NEW_RELIC_APP_NAME`, `SONAR_PROJECT_KEY`, `SONAR_ORGANIZATION`, `SONAR_HOST_URL` |
 
 `JWT_SECRET` e `RABBITMQ_USERNAME`/`RABBITMQ_PASSWORD` precisam ter o mesmo valor nos três repositórios.
 
@@ -151,6 +149,4 @@ Banco existente: o status `PENDING_PAYMENT` é novo. Se a tabela `service_orders
 
 - Billing Service: orçamento, aprovação e pagamento;
 - Execution Service: fila de execução, diagnóstico e reparo;
-- `mechanic-shop-pos-tech-challenger-lambda`: autenticação por CPF;
-- `mechanic-shop-pos-tech-challenger-kubernetes`: VPC, EKS, Lambda de infraestrutura e observabilidade;
-- `mechanic-shop-pos-tech-challenger-managed-database`: PostgreSQL RDS privado.
+- Os repositórios das fases anteriores são históricos; a infraestrutura da Fase 4 está nos três repositórios atuais.

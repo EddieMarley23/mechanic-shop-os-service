@@ -4,7 +4,7 @@
 # diferencas obrigatorias no cluster:
 #   - o upstream aponta para o Service `mechanic-shop-backend` em vez do
 #     container `springapp`;
-#   - o segredo do plugin jwt vem do Terraform (var.jwt_secret), o mesmo valor
+#   - o segredo do plugin jwt vem do pipeline (JWT_SECRET), o mesmo valor
 #     injetado como JWT_SECRET no Secret da aplicacao. Kong nao expande
 #     variaveis de ambiente dentro do arquivo declarativo, entao a unica forma
 #     de manter os dois lados em sincronia e templar o arquivo aqui.
@@ -65,15 +65,6 @@ data:
             plugins:
               - name: jwt
 
-          # Exclusiva para a Lambda de login por CPF. O Kong somente encaminha
-          # a chamada; a aplicacao valida X-Internal-Secret antes de expor
-          # qualquer dado do cliente.
-          - name: internal-customer-status
-            methods: ["GET"]
-            strip_path: false
-            paths:
-              - "/internal"
-
           # Todo o resto (login, swagger e actuator): sem checagem de JWT
           # no gateway, o SecurityFilter/@PreAuthorize do Spring ja governa.
           - name: springapp-general
@@ -120,29 +111,12 @@ data:
             paths:
               - "/api/executions"
 
-      - name: cpf-login-function
-        # Kong invokes the Terraform-managed Lambda directly. There is no API
-        # Gateway between the public Kong route and the function.
-        url: http://localhost
-        routes:
-          - name: cpf-login-route
-            strip_path: true
-            paths:
-              - "/functions/cpf-login"
-        plugins:
-          - name: aws-lambda
-            config:
-              aws_region: ${aws_region}
-              function_name: ${lambda_function_name}
-              invocation_type: RequestResponse
-              awsgateway_compatible: true
-
     consumers:
       - username: mechanic-shop-users
         jwt_secrets:
           # `key` precisa ser igual a claim `iss` de todo token emitido pela
-          # aplicacao (TokenService.java fixa o issuer "mechanic-shop-api"; a
-          # cpf-login-function espelha o mesmo valor). Um unico consumer cobre
+          # aplicacao (TokenService.java fixa o issuer "mechanic-shop-api").
+          # Um unico consumer cobre
           # todos os usuarios porque o issuer nao varia por usuario.
           - key: mechanic-shop-api
             algorithm: HS256

@@ -25,7 +25,7 @@ flowchart LR
     nr["New Relic<br/>(observabilidade)"]
 
     staff -->|"Cadastra, diagnostica, repara, entrega"| system
-    customer -->|"Login por CPF, consulta a OS,<br/>aprova orçamento e paga"| system
+    customer -->|"Login por e-mail e senha, consulta a OS,<br/>aprova orçamento e paga"| system
     system -->|"Notificações e links de aprovação"| email
     email -->|"E-mail"| customer
     system -->|"Cobrança, webhook e estorno"| mp
@@ -41,7 +41,6 @@ flowchart TB
     users["Equipe e clientes"]
 
     kong["Kong API Gateway<br/>roteamento por prefixo + JWT<br/>nas rotas do cliente"]
-    lambda["Lambda login por CPF<br/>emite o JWT do cliente"]
 
     subgraph os["OS Service (orquestrador)"]
         osapi["Spring Boot<br/>clientes, veículos, catálogo,<br/>estoque, OS e Saga"]
@@ -67,8 +66,7 @@ flowchart TB
     kong -->|"/api/**"| osapi
     kong -->|"/api/billing/**"| bapi
     kong -->|"/api/executions/**"| eapi
-    kong -->|"/functions/cpf-login"| lambda
-    lambda -->|"GET /internal/customers/{cpf}/status"| osapi
+    kong -->|"/api/auth/login"| osapi
 
     osapi --> osdb
     bapi --> bdb
@@ -91,7 +89,6 @@ flowchart TB
 | Container | Tecnologia | Responsabilidade | Dados |
 |---|---|---|---|
 | Kong | Kong 3.7 (DB-less) | Entrada única. Roteia por prefixo e valida o JWT nas rotas do cliente | — |
-| Lambda login por CPF | Java (AWS Lambda) | Autentica o cliente por CPF e emite o JWT | — |
 | **OS Service** | Java 21, Spring Boot 4, JPA | Cadastros, abertura/status/histórico da OS, estoque e preços. **Orquestra a Saga** | PostgreSQL |
 | **Billing Service** | Java 21, Spring Boot 4, JPA | Orçamento, aprovação do cliente, cobrança, verificação de pagamento e estorno | PostgreSQL próprio |
 | **Execution Service** | Java 21, Spring Boot 4, Spring Data MongoDB | Fila de execução, diagnóstico, reparo e finalização | MongoDB (replica set) |
@@ -111,7 +108,7 @@ flowchart TB
 | De → Para | Estilo | Quando |
 |---|---|---|
 | Cliente/equipe → serviços | REST síncrono via Kong | Ações de usuário (abrir OS, diagnosticar, aprovar, pagar, entregar) |
-| Lambda → OS Service | REST síncrono interno (`X-Internal-Secret`) | Login por CPF |
+| Kong → OS Service | REST síncrono (`POST /api/auth/login`) | Login por e-mail e senha |
 | OS → Billing / Execution | **Comando assíncrono** (`saga.commands`, routing key `billing` / `execution`) | Cada passo da Saga |
 | Billing / Execution → OS | **Resposta assíncrona** (`saga.events`, fila `os.saga-replies`) | Resultado de cada passo |
 | Billing ↔ Mercado Pago | REST síncrono (preferência, consulta, estorno) + webhook assinado | Cobrança, confirmação e estorno |

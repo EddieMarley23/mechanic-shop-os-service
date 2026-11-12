@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   test:
@@ -24,6 +23,14 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.11.4'
+      - name: Validate infrastructure on PRs
+        run: |
+          terraform -chdir=terraform fmt -check
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate
 
       # Unitarios + integracao (Testcontainers) + BDD; falha abaixo de 80% de linhas (merge).
       - name: Build and test
@@ -59,12 +66,67 @@ jobs:
     needs: test
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    concurrency:
+      group: academy-os-infrastructure
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'mechanic-shop-academy' }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      TF_VAR_cluster_name: ${{ vars.EKS_CLUSTER_NAME || 'mechanic-shop-academy' }}
+      TF_VAR_cluster_role_name: ${{ vars.EKS_CLUSTER_ROLE_NAME || 'LabEksClusterRole' }}
+      TF_VAR_node_role_name: ${{ vars.EKS_NODE_ROLE_NAME || 'LabEksClusterRole' }}
+      TF_VAR_db_password: ${{ secrets.DATABASE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Check lab access and pre-existing infrastructure
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          SEED_DEFAULT_PASSWORD: ${{ secrets.SEED_DEFAULT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity >/dev/null
+          aws iam get-role --role-name "$TF_VAR_cluster_role_name" >/dev/null
+          aws iam get-role --role-name "$TF_VAR_node_role_name" >/dev/null
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN JWT_SECRET RABBITMQ_USERNAME RABBITMQ_PASSWORD SEED_DEFAULT_PASSWORD TF_VAR_db_password; do
+            test -n "${!name}" || { echo "Missing $name" >&2; exit 1; }
+          done
+          test "$RABBITMQ_USERNAME" != guest || { echo 'RabbitMQ guest cannot connect from other pods' >&2; exit 1; }
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.11.4'
+          terraform_wrapper: false
+      - name: Initialize shared state and check ownership
+        run: |
+          set -euo pipefail
+          bash scripts/terraform-init.sh
+          clusters=$(aws eks list-clusters --query 'clusters[]' --output text)
+          if tr '\t' '\n' <<< "$clusters" | grep -Fxq "$EKS_CLUSTER_NAME" && ! terraform -chdir=terraform state list | grep -qx 'aws_eks_cluster.shared'; then
+            echo "Cluster already exists outside OS Terraform state. Import it before deploying: terraform -chdir=terraform import aws_eks_cluster.shared $EKS_CLUSTER_NAME" >&2
+            exit 1
+          fi
+          databases=$(aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text)
+          if tr '\t' '\n' <<< "$databases" | grep -Fxq mechanic-shop-os && ! terraform -chdir=terraform state list | grep -qx 'aws_db_instance.os'; then
+            echo 'OS database exists outside OS Terraform state; import aws_db_instance.os before deploying.' >&2
+            exit 1
+          fi
+      - name: Provision OS infrastructure
+        run: |
+          terraform -chdir=terraform fmt -check
+          terraform -chdir=terraform validate
+          terraform -chdir=terraform apply -auto-approve -input=false
+          echo "DATABASE_URL=$(terraform -chdir=terraform output -raw os_jdbc_url)" >> "$GITHUB_ENV"
+          echo "DATABASE_USERNAME=$(terraform -chdir=terraform output -raw os_db_username)" >> "$GITHUB_ENV"
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -75,7 +137,7 @@ jobs:
           docker build -t "${{ vars.DOCKERHUB_USERNAME }}/mechanic-shop-backend:${GITHUB_SHA}" .
           docker push "${{ vars.DOCKERHUB_USERNAME }}/mechanic-shop-backend:${GITHUB_SHA}"
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
       - name: Render and apply Kubernetes manifests
         env:
           namespace: mechanic-shop
@@ -90,7 +152,7 @@ jobs:
           hpa_cpu_average_utilization: '80'
           mailpit_ui_node_port: '30025'
           mailpit_smtp_node_port: '31025'
-          cluster_name: ${{ vars.EKS_CLUSTER_NAME }}
+          cluster_name: ${{ env.EKS_CLUSTER_NAME }}
           kong_image: kong:3.7
           kong_replicas: '1'
           kong_node_port: '30000'
@@ -99,12 +161,8 @@ jobs:
           kong_memory_request: 128Mi
           kong_memory_limit: 512Mi
           app_base_url: ${{ vars.APP_BASE_URL }}
-          aws_region: ${{ vars.AWS_REGION }}
-          lambda_function_name: ${{ vars.LAMBDA_FUNCTION_NAME }}
-          newrelic_app_name: ${{ vars.NEW_RELIC_APP_NAME }}
+          newrelic_app_name: ${{ vars.NEW_RELIC_APP_NAME || 'mechanic-shop-os' }}
           jwt_secret: ${{ secrets.JWT_SECRET }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
           DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
           SEED_DEFAULT_PASSWORD: ${{ secrets.SEED_DEFAULT_PASSWORD }}
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
@@ -112,9 +170,23 @@ jobs:
           RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
         run: |
+          set -euo pipefail
           render() { find "$@" -type f -name '*.yaml' -print0 | xargs -0 -I{} sh -c 'envsubst < "$1" | kubectl apply -f -' sh {}; }
           kubectl apply -f k8s/03-cluster-addons
           render k8s/00-namespaces
+          render k8s/03-app/50-kong-service.yaml
+          if [ -z "$INTERNAL_API_SECRET" ]; then
+            INTERNAL_API_SECRET=$(openssl rand -hex 32)
+          fi
+          if [ -z "$app_base_url" ]; then
+            for attempt in $(seq 1 60); do
+              host=$(kubectl get svc kong -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+              if [ -n "$host" ]; then break; fi
+              sleep 10
+            done
+            if [ -z "$host" ]; then echo 'Kong load balancer has no hostname after 10 minutes' >&2; exit 1; fi
+            export app_base_url="http://${host}:8000"
+          fi
           # Secrets antes dos Deployments, para nenhum pod subir sem credenciais.
           kubectl create secret generic rabbitmq-secret --namespace mechanic-shop \
             --from-literal=RABBITMQ_USERNAME="$RABBITMQ_USERNAME" \

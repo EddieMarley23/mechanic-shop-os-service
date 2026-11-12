@@ -99,22 +99,11 @@ services:
         paths:
           - "/api/executions"
 
-  - name: cpf-login-function
-    # AWS API Gateway (HTTP API) invoke URL for the cpf-login-lambda function,
-    # $default stage, route "POST /cpf-login".
-    url: https://tpi1pjo0hh.execute-api.us-east-1.amazonaws.com/cpf-login
-    routes:
-      - name: cpf-login-route
-        strip_path: true
-        paths:
-          - "/functions/cpf-login"
-
 consumers:
   - username: mechanic-shop-users
     jwt_secrets:
       # `key` must equal the `iss` claim every token in this app carries
-      # (TokenService.java hardcodes issuer "mechanic-shop-api"; the
-      # cpf-login-function mirrors it). One consumer/credential covers all
+      # (TokenService.java hardcodes issuer "mechanic-shop-api"). One consumer/credential covers all
       # users since the issuer never varies per-user.
       - key: mechanic-shop-api
         algorithm: HS256
