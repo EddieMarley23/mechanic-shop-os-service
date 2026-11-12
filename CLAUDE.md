@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OS Service: Spring Boot 4 / Java 21 REST API for a mechanic shop (customers, vehicles, stock, service catalog, service-order opening/status/history) and **orchestrator of the service-order Saga**. It is the Fase 3 monolith reduced for Fase 4 (docs and READMEs are in Portuguese): budgets/approval/payment moved to `../billing-service`, diagnosis/repair moved to `../execution-service`. The three services talk only through RabbitMQ; none reads another's database. To run them together use `docker-compose.full.yaml` in this repo (expects the other two repos as sibling directories; Kong on :8000 is the single entry point); `scripts/saga_e2e.sh <happy|budget_rejected|payment_refused|repair_failed>` drives the flows end to end through Kong.
 
-Related repos of the previous phases (in the workspace root, two levels up):
+Historical repositories from previous phases (not part of the Phase 4 deployment):
 
-- `mechanic-shop-pos-tech-challenger-lambda`: CPF-login Lambda (Java, Maven). Issues the JWT (HS256) after calling this API's `GET /internal/customers/{cpf}/status`. `JWT_SECRET`, `JWT_ISSUER` and `INTERNAL_API_SECRET` must match this API's values.
-- `mechanic-shop-pos-tech-challenger-kubernetes`: Terraform for VPC/EKS (`terraform/`), Lambda infra (`lambda/`), New Relic (`observability/`).
-- `mechanic-shop-pos-tech-challenger-managed-database`: Terraform for private RDS PostgreSQL (needs VPC outputs from the kubernetes repo).
+- `mechanic-shop-pos-tech-challenger-lambda`: previous CPF-login Lambda (Java, Maven). The Phase 4 gateway does not route to it. The legacy `GET /internal/customers/{cpf}/status` controller remains but is not publicly routed.
+- `mechanic-shop-pos-tech-challenger-kubernetes`: previous Terraform for VPC/EKS, Lambda infra and observability. Phase 4 shared EKS and OS RDS live in this repository's `terraform/`.
+- `mechanic-shop-pos-tech-challenger-managed-database`: previous private RDS Terraform. Phase 4 SQL databases are managed by the OS and Billing repositories independently.
 
-Request path: Kong gateway (`kong/kong.yml`, port 8000) → this API (8080); `POST /functions/cpf-login` is routed by Kong to the Lambda. Customer routes are additionally protected at Kong.
+Request path: Kong gateway (`kong/kong.yml`, port 8000) → this API (8080); `POST /api/auth/login` handles email/password login in OS. The Phase 4 gateway has no CPF Lambda route. Customer routes are additionally protected at Kong.
 
 ## Commands
 

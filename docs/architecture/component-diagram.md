@@ -11,7 +11,6 @@ flowchart LR
 
     subgraph aws["AWS"]
         lb["Load Balancer AWS<br/>(Service do Kong)"]
-        lambda["Lambda login por CPF<br/>emite o JWT do cliente"]
         rdsos[("RDS PostgreSQL<br/>banco do OS Service")]
         rdsbi[("RDS PostgreSQL<br/>banco do Billing Service")]
 
@@ -25,12 +24,11 @@ flowchart LR
         end
     end
 
-    user -->|"HTTPS"| lb --> kong
+    user -->|"HTTP"| lb --> kong
     kong -->|"/api/**"| os
     kong -->|"/api/billing/**"| bi
     kong -->|"/api/executions/**"| ex
-    kong -->|"/functions/cpf-login<br/>(plugin aws-lambda)"| lambda
-    lambda -->|"consulta interna do cliente"| os
+    kong -->|"/api/auth/login<br/>(e-mail e senha)"| os
 
     os --> rdsos
     bi --> rdsbi
@@ -53,7 +51,7 @@ flowchart LR
 
 - **Uma entrada pública:** o Load Balancer da AWS é criado pelo `Service` do Kong (`type: LoadBalancer`). Os Services dos três microsserviços são `ClusterIP`, então nenhuma requisição externa contorna o gateway.
 - **Roteamento:** o Kong escolhe o serviço pelo prefixo mais longo. As rotas do cliente (status e detalhe da OS, veículos, orçamento e pagamento) exigem JWT no próprio Kong, além do RBAC de cada serviço. O link de aprovação do e-mail e o webhook do Mercado Pago são públicos e protegidos por token de uso único e por assinatura, respectivamente.
-- **Login por CPF:** o Kong invoca a Lambda diretamente pelo plugin `aws-lambda`. A Lambda consulta o OS Service pela rota interna (`/internal`, com `X-Internal-Secret`) e emite o mesmo JWT que os três serviços validam.
+- **Login:** o OS Service autentica e-mail e senha em `POST /api/auth/login` e emite o JWT que os três serviços validam. O deploy da Fase 4 não inclui Lambda de CPF.
 - **Um banco por serviço:** o OS e o Billing usam bancos PostgreSQL separados, e o Execution usa MongoDB. Nenhum serviço tem credenciais do banco de outro.
 - **Broker compartilhado, filas próprias:** o RabbitMQ é a única peça de infraestrutura compartilhada entre os serviços; cada serviço consome apenas a sua fila (`billing.commands`, `execution.commands`, `os.saga-replies`).
 - **Observabilidade:** o agente New Relic roda nos três pods, com logs JSON (ECS), traces distribuídos, metadados Kubernetes e eventos de negócio (`MechanicShopSagaTransition`, `MechanicShopSagaFailure`). O `correlationId` atravessa as mensagens da Saga.
@@ -64,10 +62,9 @@ Cada repositório tem seu pipeline (`.github/workflows/ci-cd.yml`) e seus manife
 
 | Repositório | Recursos no cluster | Recursos externos |
 |---|---|---|
-| `mechanic-shop-os-service` | OS Service (Deployment, Service, HPA), **RabbitMQ**, **Kong**, **Mailpit**, metrics-server | RDS do OS (repositório `managed-database`) |
-| `mechanic-shop-billing-service` | Billing Service (Deployment, Service, HPA) | RDS do Billing, Mercado Pago |
-| `mechanic-shop-execution-service` | Execution Service (Deployment, Service, HPA) | MongoDB Atlas |
-| `mechanic-shop-pos-tech-challenger-kubernetes` | — | VPC, EKS, Lambda, New Relic (Terraform) |
+| `mechanic-shop-os-service` | OS Service (Deployment, Service, HPA), **RabbitMQ e exchanges**, **Kong**, **Mailpit**, metrics-server, namespace | EKS e node group (Terraform, usando VPC padrão do lab), RDS do OS (Terraform) |
+| `mechanic-shop-billing-service` | Billing Service (Deployment, Service, HPA), fila e bindings `billing.commands` | RDS do Billing (Terraform), Mercado Pago |
+| `mechanic-shop-execution-service` | Execution Service (Deployment, Service, HPA), fila e bindings `execution.commands` | MongoDB Atlas M0 (Terraform) |
 
 Em um cluster novo, rode primeiro o pipeline do OS Service, que sobe o broker e o gateway usados pelos outros dois.
 

@@ -38,9 +38,11 @@ import org.project.mechanic_shop.infrastructure.messaging.SagaReplyListener;
 import org.project.mechanic_shop.infrastructure.messaging.SagaTimeoutScheduler;
 import org.project.mechanic_shop.shared.config.observability.ObservabilityReporter;
 import org.springframework.amqp.AmqpConnectException;
+import org.springframework.amqp.core.Exchange;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.MessageDeliveryMode;
+import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -52,6 +54,15 @@ class SagaMessagingTest {
 	private static final Instant NOW = Instant.parse("2026-01-10T12:00:00Z");
 	private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 	private final ObjectMapper objectMapper = JsonMapper.builder().build();
+
+	@Test
+	void shouldOwnSharedExchangesAndOnlyItsReplyQueue() {
+		var declarables = new RabbitTopologyConfig().sagaTopology().getDeclarables();
+		assertThat(declarables.stream().filter(Exchange.class::isInstance).map(d -> ((Exchange) d).getName()))
+			.containsExactlyInAnyOrder("saga.commands", "saga.events", "saga.dlx");
+		assertThat(declarables.stream().filter(Queue.class::isInstance).map(d -> ((Queue) d).getName()))
+			.containsExactlyInAnyOrder("os.saga-replies", "os.saga-replies.dlq");
+	}
 
 	@Nested
 	class CommandPublisher {
